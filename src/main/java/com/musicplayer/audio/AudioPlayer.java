@@ -9,6 +9,7 @@ import java.io.*;
 import javax.sound.sampled.AudioFileFormat;
 import javax.sound.sampled.AudioSystem;
 import java.util.Map;
+import javax.swing.SwingUtilities;
 
 public class AudioPlayer {
     private AdvancedPlayer player;

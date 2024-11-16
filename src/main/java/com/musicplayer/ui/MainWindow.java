@@ -47,6 +47,7 @@ public class MainWindow extends JFrame {
     private JLabel songTitleLabel;
     private JLabel songArtistLabel;
     private JLabel songProgressLabel;
+    private JButton modeButton;
     
     public MainWindow() {
         this.playerController = new PlayerController();
@@ -348,7 +349,37 @@ public class MainWindow extends JFrame {
         JButton prevButton = new JButton("上一首");
         playButton = new JButton("播放");
         JButton nextButton = new JButton("下一首");
-        JButton modeButton = new JButton("顺序播放");
+        modeButton = new JButton("顺序播放");
+        
+        // 设置按钮图标和提示文本
+        modeButton.setToolTipText("点击切换播放模式");
+        
+        // 添加播放模式按钮事件
+        modeButton.addActionListener(e -> {
+            PlayerController.PlayMode currentMode = playerController.getPlayMode();
+            PlayerController.PlayMode newMode;
+            
+            switch (currentMode) {
+                case SEQUENCE:
+                    newMode = PlayerController.PlayMode.RANDOM;
+                    modeButton.setText("随机播放");
+                    modeButton.setToolTipText("当前模式：随机播放");
+                    break;
+                case RANDOM:
+                    newMode = PlayerController.PlayMode.SINGLE_LOOP;
+                    modeButton.setText("单曲循环");
+                    modeButton.setToolTipText("当前模式：单曲循环");
+                    break;
+                default:
+                    newMode = PlayerController.PlayMode.SEQUENCE;
+                    modeButton.setText("顺序播放");
+                    modeButton.setToolTipText("当前模式：顺序播放");
+                    break;
+            }
+            
+            playerController.setPlayMode(newMode);
+            updatePlayModeButton(newMode);
+        });
         
         // 添加播放/暂停按钮事件
         playButton.addActionListener(e -> {
@@ -373,29 +404,6 @@ public class MainWindow extends JFrame {
         nextButton.addActionListener(e -> {
             playerController.next();
             updatePlayerInfo();
-        });
-        
-        // 添加播放模式按钮事件
-        modeButton.addActionListener(e -> {
-            PlayerController.PlayMode currentMode = playerController.getPlayMode();
-            PlayerController.PlayMode newMode;
-            
-            switch (currentMode) {
-                case SEQUENCE:
-                    newMode = PlayerController.PlayMode.RANDOM;
-                    modeButton.setText("随机播放");
-                    break;
-                case RANDOM:
-                    newMode = PlayerController.PlayMode.SINGLE_LOOP;
-                    modeButton.setText("单曲循环");
-                    break;
-                default:
-                    newMode = PlayerController.PlayMode.SEQUENCE;
-                    modeButton.setText("顺序播放");
-                    break;
-            }
-            
-            playerController.setPlayMode(newMode);
         });
         
         controlPanel.add(prevButton);
@@ -501,11 +509,28 @@ public class MainWindow extends JFrame {
     }
     
     private void downloadSong(Song song) {
-        // TODO: 实现下载歌曲的逻辑
-        JOptionPane.showMessageDialog(this, 
-            "开始下载：" + song.getTitle(),
-            "下载提示",
-            JOptionPane.INFORMATION_MESSAGE);
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setSelectedFile(new File(song.getTitle() + ".mp3"));
+        fileChooser.setDialogTitle("保存歌曲");
+        
+        int result = fileChooser.showSaveDialog(this);
+        if (result == JFileChooser.APPROVE_OPTION) {
+            File targetFile = fileChooser.getSelectedFile();
+            try {
+                File sourceFile = new File(song.getFilePath());
+                org.apache.commons.io.FileUtils.copyFile(sourceFile, targetFile);
+                JOptionPane.showMessageDialog(this,
+                    "下载完成：" + song.getTitle(),
+                    "下载成功",
+                    JOptionPane.INFORMATION_MESSAGE);
+            } catch (IOException e) {
+                e.printStackTrace();
+                JOptionPane.showMessageDialog(this,
+                    "下载失败：" + e.getMessage(),
+                    "错误",
+                    JOptionPane.ERROR_MESSAGE);
+            }
+        }
     }
     
     private void favoriteSong(Song song) {
@@ -531,17 +556,102 @@ public class MainWindow extends JFrame {
             Playlist playlist = dataManager.getPlaylist(selectedPlaylist);
             if (playlist != null && !playlist.getSongs().isEmpty()) {
                 playerController.setCurrentPlaylist(playlist);
-                playerController.setCurrentSong(playlist.getSongs().get(0));
+                
+                // 根据当前播放模式选择第一首歌
+                if (playerController.getPlayMode() == PlayerController.PlayMode.RANDOM) {
+                    // 随机模式下随机选择一首歌
+                    int randomIndex = (int) (Math.random() * playlist.getSongs().size());
+                    playerController.setCurrentSong(playlist.getSongs().get(randomIndex));
+                } else {
+                    // 其他模式从第一首开始播放
+                    playerController.setCurrentSong(playlist.getSongs().get(0));
+                }
+                
                 playerController.play();
                 playButton.setText("暂停");
-                currentPlayingSong = playlist.getSongs().get(0);
+                currentPlayingSong = playerController.getCurrentSong();
                 updateCurrentSongLabel();
             }
         }
     }
     
     private void downloadAllSongs() {
-        // TODO: 实现下载全部歌曲的逻辑
+        String selectedPlaylist = myPlaylistList.getSelectedValue();
+        if (selectedPlaylist == null) {
+            JOptionPane.showMessageDialog(this,
+                "请先选择一个歌单",
+                "提示",
+                JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        
+        Playlist playlist = dataManager.getPlaylist(selectedPlaylist);
+        if (playlist == null || playlist.getSongs().isEmpty()) {
+            JOptionPane.showMessageDialog(this,
+                "歌单为空",
+                "提示",
+                JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        
+        // 选择下载目录
+        JFileChooser dirChooser = new JFileChooser();
+        dirChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        dirChooser.setDialogTitle("选择下载目录");
+        
+        int result = dirChooser.showSaveDialog(this);
+        if (result == JFileChooser.APPROVE_OPTION) {
+            File downloadDir = dirChooser.getSelectedFile();
+            
+            // 创建进度对话框
+            JDialog progressDialog = new JDialog(this, "下载进度", true);
+            JProgressBar progressBar = new JProgressBar(0, playlist.getSongs().size());
+            JLabel statusLabel = new JLabel("正在下载...");
+            
+            progressDialog.setLayout(new BorderLayout(10, 10));
+            progressDialog.add(statusLabel, BorderLayout.NORTH);
+            progressDialog.add(progressBar, BorderLayout.CENTER);
+            progressDialog.setSize(300, 100);
+            progressDialog.setLocationRelativeTo(this);
+            
+            // 在后台线程中执行下载
+            Thread downloadThread = new Thread(() -> {
+                int successCount = 0;
+                int totalCount = playlist.getSongs().size();
+                
+                for (Song song : playlist.getSongs()) {
+                    try {
+                        // 更新状态
+                        SwingUtilities.invokeLater(() -> {
+                            statusLabel.setText("正在下载: " + song.getTitle());
+                            progressBar.setValue(progressBar.getValue() + 1);
+                        });
+                        
+                        // 复制文件
+                        File sourceFile = new File(song.getFilePath());
+                        File targetFile = new File(downloadDir, song.getTitle() + ".mp3");
+                        org.apache.commons.io.FileUtils.copyFile(sourceFile, targetFile);
+                        
+                        successCount++;
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+                
+                // 下载完成后显示结果
+                final int finalSuccessCount = successCount;
+                SwingUtilities.invokeLater(() -> {
+                    progressDialog.dispose();
+                    JOptionPane.showMessageDialog(this,
+                        String.format("下载完成\n成功: %d/%d", finalSuccessCount, totalCount),
+                        "下载结果",
+                        JOptionPane.INFORMATION_MESSAGE);
+                });
+            });
+            
+            downloadThread.start();
+            progressDialog.setVisible(true); // 显示进度对话框
+        }
     }
     
     private void addToMyPlaylist() {
@@ -792,6 +902,24 @@ public class MainWindow extends JFrame {
         
         g2.dispose();
         return output;
+    }
+    
+    // 添加更新播放模式按钮的方法
+    private void updatePlayModeButton(PlayerController.PlayMode mode) {
+        switch (mode) {
+            case SEQUENCE:
+                modeButton.setText("顺序播放");
+                modeButton.setToolTipText("当前模式：顺序播放");
+                break;
+            case RANDOM:
+                modeButton.setText("随机播放");
+                modeButton.setToolTipText("当前模式：随机播放");
+                break;
+            case SINGLE_LOOP:
+                modeButton.setText("单曲循环");
+                modeButton.setToolTipText("当前模式：单曲循环");
+                break;
+        }
     }
     
     public static void main(String[] args) {
