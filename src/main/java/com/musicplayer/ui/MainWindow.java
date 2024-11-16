@@ -18,12 +18,10 @@ import java.io.File;
 import java.io.IOException;
 import javax.swing.table.TableCellRenderer;
 import javax.swing.table.TableCellEditor;
-import javax.swing.DefaultCellEditor;
+
 import java.awt.image.BufferedImage;
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
 import java.awt.geom.RoundRectangle2D;
-import java.awt.BasicStroke;
+
 import javax.imageio.ImageIO;
 
 public class MainWindow extends JFrame {
@@ -48,10 +46,31 @@ public class MainWindow extends JFrame {
     private JLabel songArtistLabel;
     private JLabel songProgressLabel;
     private JButton modeButton;
+    private JPanel infoPanel;
+    private JButton playAllButton;
+    private JButton downloadAllButton;
+    private JButton addToMyPlaylistButton;
+    private JButton changeCoverButton;
     
     public MainWindow() {
         this.playerController = new PlayerController();
+        initializeComponents();
         initializeUI();
+    }
+    
+    private void initializeComponents() {
+        playAllButton = new JButton("播放全部");
+        downloadAllButton = new JButton("下载全部");
+        addToMyPlaylistButton = new JButton("加入我的歌单");
+        changeCoverButton = new JButton("更换封面");
+        
+        infoPanel = new JPanel();
+        infoPanel.setLayout(new BoxLayout(infoPanel, BoxLayout.Y_AXIS));
+        
+        playAllButton.addActionListener(e -> playAllSongs());
+        downloadAllButton.addActionListener(e -> downloadAllSongs());
+        addToMyPlaylistButton.addActionListener(e -> addToMyPlaylist());
+        changeCoverButton.addActionListener(e -> changeCover());
     }
     
     private void initializeUI() {
@@ -82,12 +101,59 @@ public class MainWindow extends JFrame {
         sidebar.setLayout(new BorderLayout());
         sidebar.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, Color.GRAY));
         
-        // 创建我的歌单和网友歌单区域
-        JTabbedPane tabbedPane = new JTabbedPane();
-        tabbedPane.addTab("我的歌单", createMyPlaylistPanel());
-        tabbedPane.addTab("网友歌单", createFriendsPlaylistPanel());
+        // 创建垂直分割的面板
+        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
+        splitPane.setDividerLocation(400); // 设置分割位置
+        splitPane.setDividerSize(1); // 设置分割线宽度
         
-        sidebar.add(tabbedPane, BorderLayout.CENTER);
+        // 创建网友歌单面板（上半部分）
+        JPanel friendsPanel = new JPanel(new BorderLayout());
+        JLabel friendsLabel = new JLabel("网友歌单", SwingConstants.LEFT);
+        friendsLabel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        friendsLabel.setFont(new Font("微软雅黑", Font.BOLD, 14));
+        friendsPanel.add(friendsLabel, BorderLayout.NORTH);
+        
+        // 创建网友歌单列表
+        DefaultListModel<String> friendsListModel = new DefaultListModel<>();
+        friendsPlaylistList = new JList<>(friendsListModel);
+        friendsPlaylistList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        
+        // 加载网友歌单
+        for (Playlist playlist : dataManager.getAllPlaylists()) {
+            if (!playlist.getOwnerId().equals("学号10001")) {
+                friendsListModel.addElement(playlist.getName());
+            }
+        }
+        
+        // 添加网友歌单选择监听器
+        friendsPlaylistList.addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                String selectedPlaylist = friendsPlaylistList.getSelectedValue();
+                if (selectedPlaylist != null) {
+                    updateContentPanel(selectedPlaylist);
+                    myPlaylistList.clearSelection(); // 清除我的歌单的选择
+                }
+            }
+        });
+        
+        friendsPanel.add(new JScrollPane(friendsPlaylistList), BorderLayout.CENTER);
+        
+        // 创建我的歌单面板（下半部分）
+        JPanel myPanel = new JPanel(new BorderLayout());
+        JLabel myLabel = new JLabel("我的歌单", SwingConstants.LEFT);
+        myLabel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        myLabel.setFont(new Font("微软雅黑", Font.BOLD, 14));
+        myPanel.add(myLabel, BorderLayout.NORTH);
+        
+        // 创建我的歌单列表和按钮面板
+        JPanel myListPanel = createMyPlaylistPanel();
+        myPanel.add(myListPanel, BorderLayout.CENTER);
+        
+        // 将两个面板添加到分割面板中
+        splitPane.setTopComponent(friendsPanel);
+        splitPane.setBottomComponent(myPanel);
+        
+        sidebar.add(splitPane, BorderLayout.CENTER);
         return sidebar;
     }
     
@@ -98,11 +164,12 @@ public class MainWindow extends JFrame {
         DefaultListModel<String> listModel = new DefaultListModel<>();
         myPlaylistList = new JList<>(listModel);
         myPlaylistList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        JScrollPane scrollPane = new JScrollPane(myPlaylistList);
         
-        // 加载所有歌单
+        // 加载我的歌单
         for (Playlist playlist : dataManager.getAllPlaylists()) {
-            listModel.addElement(playlist.getName());
+            if (playlist.getOwnerId().equals("学号10001")) {
+                listModel.addElement(playlist.getName());
+            }
         }
         
         // 添加选择监听器
@@ -111,6 +178,7 @@ public class MainWindow extends JFrame {
                 String selectedPlaylist = myPlaylistList.getSelectedValue();
                 if (selectedPlaylist != null) {
                     updateContentPanel(selectedPlaylist);
+                    friendsPlaylistList.clearSelection(); // 清除网友歌单的选择
                 }
             }
         });
@@ -134,7 +202,7 @@ public class MainWindow extends JFrame {
                 Playlist newPlaylist = new Playlist(
                     String.valueOf(System.currentTimeMillis()),
                     playlistName,
-                    "user123" // TODO: 替换为实际的用户ID
+                    "学号10001" // TODO: 替换为实际的用户ID
                 );
                 dataManager.addPlaylist(newPlaylist);
                 listModel.addElement(playlistName);
@@ -148,8 +216,8 @@ public class MainWindow extends JFrame {
                 String playlistName = myPlaylistList.getSelectedValue();
                 int confirm = JOptionPane.showConfirmDialog(
                     this,
-                    "确定要删除选中的歌单吗？",
-                    "删除歌单",
+                    "确定要删除选中的歌单吗",
+                    "除歌单",
                     JOptionPane.YES_NO_OPTION
                 );
                 
@@ -168,19 +236,8 @@ public class MainWindow extends JFrame {
         buttonPanel.add(importButton);
         
         panel.add(buttonPanel, BorderLayout.NORTH);
-        panel.add(scrollPane, BorderLayout.CENTER);
+        panel.add(new JScrollPane(myPlaylistList), BorderLayout.CENTER);
         
-        return panel;
-    }
-    
-    private JPanel createFriendsPlaylistPanel() {
-        JPanel panel = new JPanel(new BorderLayout());
-        
-        DefaultListModel<String> listModel = new DefaultListModel<>();
-        JList<String> playlistList = new JList<>(listModel);
-        JScrollPane scrollPane = new JScrollPane(playlistList);
-        
-        panel.add(scrollPane, BorderLayout.CENTER);
         return panel;
     }
     
@@ -214,19 +271,20 @@ public class MainWindow extends JFrame {
         coverImageLabel.setPreferredSize(new Dimension(180, 180));
         coverImageLabel.setBorder(BorderFactory.createLineBorder(Color.GRAY, 1, true));
         coverImageLabel.setHorizontalAlignment(SwingConstants.CENTER);
-        setDefaultCoverImage(); // 设置默认封面
+        setDefaultCoverImage();
         
         coverPanel.add(coverImageLabel, BorderLayout.CENTER);
         
         // 创建右侧信息面板
-        JPanel infoPanel = new JPanel();
+        infoPanel = new JPanel();
         infoPanel.setLayout(new BoxLayout(infoPanel, BoxLayout.Y_AXIS));
         infoPanel.setBorder(BorderFactory.createEmptyBorder(10, 20, 10, 10));
         
+        // 创建标签
         playlistNameLabel = new JLabel("歌单名称");
         playlistNameLabel.setFont(new Font("微软雅黑", Font.BOLD, 24));
         
-        playlistOwnerLabel = new JLabel("建者：");
+        playlistOwnerLabel = new JLabel("创建者：");
         playlistOwnerLabel.setFont(new Font("微软雅黑", Font.PLAIN, 14));
         
         playlistDateLabel = new JLabel("创建时间：");
@@ -234,22 +292,23 @@ public class MainWindow extends JFrame {
         
         // 创建按钮面板
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        JButton playAllButton = new JButton("播放全部");
-        JButton downloadAllButton = new JButton("下载全部");
-        JButton addToMyPlaylistButton = new JButton("加入我的歌单");
-        JButton changeCoverButton = new JButton("更换封面");
+        
+        // 初始化按钮
+        playAllButton = new JButton("播放全部");
+        changeCoverButton = new JButton("更换封面");
+        downloadAllButton = new JButton("下载全部");
+        addToMyPlaylistButton = new JButton("加入我的歌单");
         
         // 添加按钮事件
         playAllButton.addActionListener(e -> playAllSongs());
+        changeCoverButton.addActionListener(e -> changeCover());
         downloadAllButton.addActionListener(e -> downloadAllSongs());
         addToMyPlaylistButton.addActionListener(e -> addToMyPlaylist());
-        changeCoverButton.addActionListener(e -> changeCover());
         
+        // 默认只添加播放全部按钮
         buttonPanel.add(playAllButton);
-        buttonPanel.add(downloadAllButton);
-        buttonPanel.add(addToMyPlaylistButton);
-        buttonPanel.add(changeCoverButton);
         
+        // 添加所有组件到信息面板
         infoPanel.add(playlistNameLabel);
         infoPanel.add(Box.createVerticalStrut(10));
         infoPanel.add(playlistOwnerLabel);
@@ -419,6 +478,10 @@ public class MainWindow extends JFrame {
         return panel;
     }
     
+    /**
+     * 更新歌单内容面板
+     * @param playlistName 歌单名称
+     */
     private void updateContentPanel(String playlistName) {
         // 根据歌单名称查找对应的歌单
         Playlist playlist = findPlaylist(playlistName);
@@ -437,26 +500,17 @@ public class MainWindow extends JFrame {
         // 更新封面图片
         updateCoverImage(playlist.getCoverImagePath());
         
-        // 清空并更新歌曲列表
-        songTableModel.setRowCount(0);
+        // 更新歌曲列表
+        updateSongList(playlist);
         
-        // 存储当前播放列表供按钮使用
-        songTable.putClientProperty("currentPlaylist", playlist);
-        
-        // 加载歌曲数据
-        List<Song> songs = playlist.getSongs();
-        for (int i = 0; i < songs.size(); i++) {
-            Song song = songs.get(i);
-            Object[] row = new Object[5];
-            row[0] = i + 1; // 序号
-            row[1] = song.getTitle();
-            row[2] = song.getArtist();
-            row[3] = formatDuration(song.getDuration());
-            row[4] = ""; // 操作按钮由渲染器处理
-            songTableModel.addRow(row);
-        }
+        // 更新按钮显示
+        updateButtonVisibility(playlist);
     }
     
+    /**
+     * 更新封面图片
+     * @param coverPath 封面图片路径
+     */
     private void updateCoverImage(String coverPath) {
         if (coverPath != null && !coverPath.isEmpty()) {
             try {
@@ -478,36 +532,70 @@ public class MainWindow extends JFrame {
         setDefaultCoverImage();
     }
     
+    /**
+     * 格式化时长显示
+     * @param duration 时长
+     * @return 格式化后的字符串（MM:SS）
+     */
     private String formatDuration(Duration duration) {
         long seconds = duration.getSeconds();
         return String.format("%02d:%02d", seconds / 60, seconds % 60);
     }
     
+    /**
+     * 查找歌单
+     * @param playlistName 歌单名称
+     * @return 歌单对象
+     */
     private Playlist findPlaylist(String playlistName) {
         return dataManager.getPlaylist(playlistName);
     }
     
-    // 歌曲操作方法
+    /**
+     * 播放歌曲
+     * @param song 要播放的歌曲
+     */
     private void playSong(Song song) {
-        if (currentPlayingSong != null && 
-            currentPlayingSong.equals(song)) {
-            if (playerController.isPlaying()) {
-                playerController.pause();
-                playButton.setText("播放");
+        try {
+            if (currentPlayingSong != null && 
+                currentPlayingSong.equals(song)) {
+                if (playerController.isPlaying()) {
+                    playerController.pause();
+                    playButton.setText("播放");
+                } else {
+                    playerController.resume();
+                    playButton.setText("暂停");
+                }
             } else {
-                playerController.resume();
-                playButton.setText("暂停");
+                currentPlayingSong = song;
+                playerController.setCurrentSong(song);
+                try {
+                    playerController.play();
+                    playButton.setText("暂停");
+                    updateCurrentSongLabel();
+                    progressSlider.setValue(0);
+                } catch (RuntimeException e) {
+                    JOptionPane.showMessageDialog(this,
+                        "播放失败：" + e.getMessage(),
+                        "错误",
+                        JOptionPane.ERROR_MESSAGE);
+                    currentPlayingSong = null;
+                    updateCurrentSongLabel();
+                }
             }
-        } else {
-            currentPlayingSong = song;
-            playerController.setCurrentSong(song);
-            playerController.play();
-            playButton.setText("暂停");
-            updateCurrentSongLabel();
-            progressSlider.setValue(0);
+        } catch (Exception e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this,
+                "播放出错：" + e.getMessage(),
+                "错误",
+                JOptionPane.ERROR_MESSAGE);
         }
     }
     
+    /**
+     * 下载歌曲
+     * @param song 要下载的歌曲
+     */
     private void downloadSong(Song song) {
         JFileChooser fileChooser = new JFileChooser();
         fileChooser.setSelectedFile(new File(song.getTitle() + ".mp3"));
@@ -549,30 +637,60 @@ public class MainWindow extends JFrame {
         }
     }
     
-    // 按钮事件处理方法
-    private void playAllSongs() {
-        String selectedPlaylist = myPlaylistList.getSelectedValue();
-        if (selectedPlaylist != null) {
-            Playlist playlist = dataManager.getPlaylist(selectedPlaylist);
-            if (playlist != null && !playlist.getSongs().isEmpty()) {
-                playerController.setCurrentPlaylist(playlist);
-                
-                // 根据当前播放模式选择第一首歌
-                if (playerController.getPlayMode() == PlayerController.PlayMode.RANDOM) {
-                    // 随机模式下随机选择一首歌
-                    int randomIndex = (int) (Math.random() * playlist.getSongs().size());
-                    playerController.setCurrentSong(playlist.getSongs().get(randomIndex));
-                } else {
-                    // 其他模式从第一首开始播放
-                    playerController.setCurrentSong(playlist.getSongs().get(0));
-                }
-                
-                playerController.play();
-                playButton.setText("暂停");
-                currentPlayingSong = playerController.getCurrentSong();
-                updateCurrentSongLabel();
-            }
+    /**
+     * 获取当前选中的歌单
+     * 从两个列表中获取当前选中的歌单名称
+     * @return 当前选中的歌单名称，如果没有选中则返回null
+     */
+    private String getCurrentSelectedPlaylist() {
+        // 先检查网友歌单是否有选中项
+        String selectedFriendPlaylist = friendsPlaylistList.getSelectedValue();
+        if (selectedFriendPlaylist != null) {
+            return selectedFriendPlaylist;
         }
+        
+        // 再检查我的歌单是否有选中项
+        return myPlaylistList.getSelectedValue();
+    }
+    
+    /**
+     * 播放全部歌曲
+     */
+    private void playAllSongs() {
+        String selectedPlaylist = getCurrentSelectedPlaylist();
+        if (selectedPlaylist == null) {
+            JOptionPane.showMessageDialog(this,
+                "请先选择一个歌单",
+                "提示",
+                JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        
+        Playlist playlist = dataManager.getPlaylist(selectedPlaylist);
+        if (playlist == null || playlist.getSongs().isEmpty()) {
+            JOptionPane.showMessageDialog(this,
+                "歌单为空",
+                "提示",
+                JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        
+        playerController.setCurrentPlaylist(playlist);
+        
+        // 根据当前播放模式选择第一首歌
+        if (playerController.getPlayMode() == PlayerController.PlayMode.RANDOM) {
+            // 随机模式下随机选择一首歌
+            int randomIndex = (int) (Math.random() * playlist.getSongs().size());
+            playerController.setCurrentSong(playlist.getSongs().get(randomIndex));
+        } else {
+            // 其他模式从第一首开始播放
+            playerController.setCurrentSong(playlist.getSongs().get(0));
+        }
+        
+        playerController.play();
+        playButton.setText("暂停");
+        currentPlayingSong = playerController.getCurrentSong();
+        updateCurrentSongLabel();
     }
     
     private void downloadAllSongs() {
@@ -733,7 +851,34 @@ public class MainWindow extends JFrame {
         }
     }
     
-    // 添加更新当前播放歌曲标签的方法
+    /**
+     * 更新歌曲列表显示
+     * @param playlist 要显示的歌单
+     */
+    private void updateSongList(Playlist playlist) {
+        // 清空现有的表格数据
+        songTableModel.setRowCount(0);
+        
+        // 保存当前播放列表供按钮使用
+        songTable.putClientProperty("currentPlaylist", playlist);
+        
+        // 加载歌曲数据
+        List<Song> songs = playlist.getSongs();
+        for (int i = 0; i < songs.size(); i++) {
+            Song song = songs.get(i);
+            Object[] row = new Object[5];
+            row[0] = i + 1; // 序号
+            row[1] = song.getTitle(); // 歌名
+            row[2] = song.getArtist(); // 歌手
+            row[3] = formatDuration(song.getDuration()); // 时长
+            row[4] = ""; // 操作按钮由渲染器处理
+            songTableModel.addRow(row);
+        }
+    }
+    
+    /**
+     * 更新当前播放歌曲标签
+     */
     private void updateCurrentSongLabel() {
         if (currentPlayingSong != null) {
             songTitleLabel.setText(currentPlayingSong.getTitle());
@@ -745,6 +890,21 @@ public class MainWindow extends JFrame {
             songTitleLabel.setText("未播放");
             songArtistLabel.setText("");
             songProgressLabel.setText("00:00 / 00:00");
+        }
+    }
+    
+    /**
+     * 更新进度标签
+     * @param current 当前进度值
+     * @param total 总进度值
+     */
+    private void updateProgressLabel(int current, int total) {
+        if (currentPlayingSong != null) {
+            long totalSeconds = currentPlayingSong.getDuration().getSeconds();
+            long currentSeconds = (totalSeconds * current) / 100;
+            songProgressLabel.setText(String.format("%02d:%02d / %02d:%02d",
+                currentSeconds / 60, currentSeconds % 60,
+                totalSeconds / 60, totalSeconds % 60));
         }
     }
     
@@ -849,17 +1009,6 @@ public class MainWindow extends JFrame {
         }
     }
     
-    // 添加更新进度标签的方法
-    private void updateProgressLabel(int current, int total) {
-        if (currentPlayingSong != null) {
-            long totalSeconds = currentPlayingSong.getDuration().getSeconds();
-            long currentSeconds = (totalSeconds * current) / 100;
-            songProgressLabel.setText(String.format("%02d:%02d / %02d:%02d",
-                currentSeconds / 60, currentSeconds % 60,
-                totalSeconds / 60, totalSeconds % 60));
-        }
-    }
-    
     // 添加设置默认封面的方法
     private void setDefaultCoverImage() {
         // 加载默认封面图片（需要准备一个默认封面图片）
@@ -922,15 +1071,52 @@ public class MainWindow extends JFrame {
         }
     }
     
+    /**
+     * 更新按钮显示
+     * @param playlist 当前选中的歌单
+     */
+    private void updateButtonVisibility(Playlist playlist) {
+        // 获取按钮面板
+        JPanel buttonPanel = (JPanel) infoPanel.getComponent(infoPanel.getComponentCount() - 1);
+        buttonPanel.removeAll();
+        
+        // 始终显示播放全部按钮
+        buttonPanel.add(playAllButton);
+        
+        // 根据歌单所有者判断显示不同的按钮
+        if (playlist.getOwnerId().equals("学号10001")) {
+            // 我的歌单：显示更换封面和下载全部按钮
+            buttonPanel.add(changeCoverButton);
+            buttonPanel.add(downloadAllButton);
+        } else {
+            // 网友歌单：显示加入我的歌单和下载全部按钮
+            buttonPanel.add(addToMyPlaylistButton);
+            buttonPanel.add(downloadAllButton);
+        }
+        
+        // 刷新面板
+        buttonPanel.revalidate();
+        buttonPanel.repaint();
+    }
+    
+    /**
+     * 应用程序入口点
+     * 初始化UI主题并启动主窗口
+     */
     public static void main(String[] args) {
         try {
+            // 设置现代化暗色主题
             UIManager.setLookAndFeel(new FlatDarkLaf());
         } catch (Exception ex) {
+            // 如果主题设置失败，打印错误信息
             System.err.println("Failed to initialize LaF");
         }
         
+        // 在EDT线程中创建并显示主窗口
         SwingUtilities.invokeLater(() -> {
+            // 创建主窗口实例
             MainWindow window = new MainWindow();
+            // 显示窗口
             window.setVisible(true);
         });
     }

@@ -3,14 +3,36 @@ package com.musicplayer.model;
 import java.io.Serializable;
 import java.time.Duration;
 
+/**
+ * 歌曲实体类，存储单首歌曲的信息
+ */
 public class Song implements Serializable {
+    /** 序列化版本ID */
     private static final long serialVersionUID = 1L;
+    
+    /** 歌曲ID */
     private String id;
+    
+    /** 歌曲标题 */
     private String title;
+    
+    /** 歌手名称 */
     private String artist;
+    
+    /** 歌曲时长 */
     private Duration duration;
+    
+    /** 音频文件路径 */
     private String filePath;
     
+    /**
+     * 构造函数
+     * @param id 歌曲ID
+     * @param title 歌曲标题
+     * @param artist 歌手名称
+     * @param duration 歌曲时长
+     * @param filePath 音频文件路径
+     */
     public Song(String id, String title, String artist, Duration duration, String filePath) {
         this.id = id;
         this.title = title;

@@ -6,44 +6,71 @@ import javazoom.jl.player.advanced.PlaybackListener;
 import javax.swing.Timer;
 import java.awt.event.ActionListener;
 import java.io.*;
-import javax.sound.sampled.AudioFileFormat;
-import javax.sound.sampled.AudioSystem;
-import java.util.Map;
-import javax.swing.SwingUtilities;
 
+/**
+ * 音频播放器类，负责MP3文件的播放控制
+ */
 public class AudioPlayer {
+    /** 播放器实例 */
     private AdvancedPlayer player;
+    
+    /** 文件输入流 */
     private FileInputStream fileInputStream;
+    
+    /** 缓冲输入流 */
     private BufferedInputStream bufferedInputStream;
+    
+    /** 是否正在播放 */
     private boolean isPlaying = false;
+    
+    /** 播放线程 */
     private Thread playerThread;
+    
+    /** 当前播放文件路径 */
     private String currentFilePath;
+    
+    /** 播放事件监听器 */
     private PlaybackListener playbackListener;
-    private int totalFrames;
-    private int currentFrame;
-    private long totalDurationInSeconds;
-    private ProgressListener progressListener;
+    
+    /** 进度更新定时器 */
     private Timer progressTimer;
+    
+    /** 文件总字节数 */
     private long totalBytes;
+    
+    /** 已读取字节数 */
     private long bytesRead;
-    private FileInputStream savedFileInputStream;
+    
+    /** 保存的播放位置 */
     private long savedPosition;
     
+    /**
+     * 进度监听器接口
+     */
     public interface ProgressListener {
+        /**
+         * 进度更新回调
+         * @param current 当前进度值
+         * @param total 总进度值
+         */
         void onProgress(int current, int total);
     }
     
+    /** 进度监听器实例 */
+    private ProgressListener progressListener;
+    
+    /**
+     * 构造函数，初始化播放监听器
+     */
     public AudioPlayer() {
         this.playbackListener = new PlaybackListener() {
             @Override
             public void playbackStarted(PlaybackEvent evt) {
-                currentFrame = evt.getFrame();
                 startProgressTimer();
             }
             
             @Override
             public void playbackFinished(PlaybackEvent evt) {
-                currentFrame = evt.getFrame();
                 isPlaying = false;
                 stopProgressTimer();
                 if (progressListener != null) {
@@ -53,10 +80,17 @@ public class AudioPlayer {
         };
     }
     
+    /**
+     * 设置进度监听器
+     * @param listener 进度监听器
+     */
     public void setProgressListener(ProgressListener listener) {
         this.progressListener = listener;
     }
     
+    /**
+     * 开始进度更新定时器
+     */
     private void startProgressTimer() {
         if (progressTimer != null) {
             progressTimer.stop();
@@ -65,7 +99,6 @@ public class AudioPlayer {
         progressTimer = new Timer(100, e -> {
             if (isPlaying && progressListener != null && totalBytes > 0) {
                 try {
-                    // 更新已读取的字节数
                     bytesRead = totalBytes - fileInputStream.available();
                     int progress = (int) ((bytesRead * 100.0) / totalBytes);
                     progress = Math.min(progress, 100);
@@ -78,6 +111,9 @@ public class AudioPlayer {
         progressTimer.start();
     }
     
+    /**
+     * 停止进度更新定时器
+     */
     private void stopProgressTimer() {
         if (progressTimer != null) {
             progressTimer.stop();
@@ -85,24 +121,28 @@ public class AudioPlayer {
         }
     }
     
+    /**
+     * 播放指定的音频文件
+     * @param filePath 音频文件路径
+     */
     public void play(String filePath) {
-        // 如果是新的歌曲，从头开始播放
         if (!filePath.equals(currentFilePath)) {
-            stop(); // 停止当前播放
+            stop();
             currentFilePath = filePath;
             savedPosition = 0;
             startPlayback(0);
         } else {
-            // 如果是同一首歌，从头开始播放
             savedPosition = 0;
             startPlayback(0);
         }
     }
     
+    /**
+     * 暂停播放
+     */
     public void pause() {
         if (player != null && isPlaying) {
             try {
-                // 保存当前位置
                 savedPosition = bytesRead;
                 stopProgressTimer();
                 player.close();
@@ -119,22 +159,27 @@ public class AudioPlayer {
         }
     }
     
+    /**
+     * 从暂停处继续播放
+     */
     public void resume() {
         if (currentFilePath != null && !isPlaying) {
             startPlayback(savedPosition);
         }
     }
     
+    /**
+     * 开始播放
+     * @param startPosition 开始位置（字节数）
+     */
     private void startPlayback(long startPosition) {
         try {
-            // 获取文件总字节数
             File file = new File(currentFilePath);
             totalBytes = file.length();
             
             playerThread = new Thread(() -> {
                 try {
                     fileInputStream = new FileInputStream(currentFilePath);
-                    // 跳转到保存的位置
                     if (startPosition > 0) {
                         fileInputStream.skip(startPosition);
                         bytesRead = startPosition;
@@ -149,7 +194,6 @@ public class AudioPlayer {
                     isPlaying = true;
                     startProgressTimer();
                     player.play();
-                    
                 } catch (Exception e) {
                     e.printStackTrace();
                 } finally {
@@ -164,11 +208,9 @@ public class AudioPlayer {
         }
     }
     
-    private int getCurrentFramePosition() {
-        // 这里我们返回记录的当前帧位置
-        return currentFrame;
-    }
-    
+    /**
+     * 停止播放
+     */
     public void stop() {
         if (player != null) {
             try {
@@ -176,7 +218,7 @@ public class AudioPlayer {
                 if (fileInputStream != null) fileInputStream.close();
                 if (bufferedInputStream != null) bufferedInputStream.close();
                 isPlaying = false;
-                currentFrame = 0; // 重置播放位置
+                savedPosition = 0;
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -186,12 +228,12 @@ public class AudioPlayer {
         }
     }
     
+    /**
+     * 获取播放状态
+     * @return 是否正在播放
+     */
     public boolean isPlaying() {
         return isPlaying;
-    }
-    
-    public int getCurrentFrame() {
-        return currentFrame;
     }
     
     @Override
