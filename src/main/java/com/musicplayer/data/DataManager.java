@@ -27,12 +27,19 @@ public class DataManager {
     /** 数据文件路径 */
     private final String DATA_FILE = "playlists.dat";
     
+    /** 存储收藏歌曲的Map，key为歌曲ID */
+    private final Map<String, Song> favoriteSongs = new HashMap<>();
+    
+    /** 收藏歌曲数据文件路径 */
+    private final String FAVORITE_FILE = "favorites.dat";
+    
     /**
      * 私有构造函数，初始化数据
      */
     private DataManager() {
         playlists = new HashMap<>();
         loadData();
+        loadFavorites(); // 加载收藏数据
     }
     
     /**
@@ -127,6 +134,11 @@ public class DataManager {
             myPlaylist.setCreateDate(LocalDateTime.now());
             playlists.put(myPlaylist.getName(), myPlaylist);
 
+            // 创建我的收藏歌单
+            Playlist favoritePlaylist = new Playlist("0", "我的收藏", "学号10001");
+            favoritePlaylist.setCreateDate(LocalDateTime.now());
+            playlists.put(favoritePlaylist.getName(), favoritePlaylist);
+
             // 创建网友歌单
             createFriendPlaylist("2", "杂七杂八的歌单", "学号10002", 5, "list1");
             createFriendPlaylist("3", "深情emo的歌单", "学号10003", 3, "list2");
@@ -137,6 +149,25 @@ public class DataManager {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+    
+    /**
+     * 更新我的收藏歌单
+     */
+    private void updateFavoritePlaylist() {
+        Playlist favoritePlaylist = playlists.get("我的收藏");
+        if (favoritePlaylist == null) {
+            favoritePlaylist = new Playlist("0", "我的收藏", "学号10001");
+            favoritePlaylist.setCreateDate(LocalDateTime.now());
+            playlists.put(favoritePlaylist.getName(), favoritePlaylist);
+        }
+        
+        // 清空并重新添加所有收藏的歌曲
+        favoritePlaylist.getSongs().clear();
+        favoritePlaylist.getSongs().addAll(favoriteSongs.values());
+        
+        // 保存更新后的歌单数据
+        saveData();
     }
     
     /**
@@ -207,10 +238,77 @@ public class DataManager {
 
             // 将歌单添加到集合中
             playlists.put(playlist.getName(), playlist);
-            System.out.println("已创建歌单: " + name + "，包含 " + playlist.getSongs().size() + " 首歌曲");
+            System.out.println("已创建歌单: " + name + "，包含 " + playlist.getSongs().size() + " 首歌");
             
         } catch (Exception e) {
             System.err.println("创建歌单失败: " + name);
+            e.printStackTrace();
+        }
+    }
+    
+    /**
+     * 收藏歌曲
+     * @param song 要收藏的歌曲
+     * @return 是否收藏成功
+     */
+    public boolean addFavoriteSong(Song song) {
+        if (!favoriteSongs.containsKey(song.getId())) {
+            favoriteSongs.put(song.getId(), song);
+            saveFavorites();
+            updateFavoritePlaylist(); // 更新我的收藏歌单
+            return true;
+        }
+        return false;
+    }
+    
+    /**
+     * 取消收藏歌曲
+     * @param songId 歌曲ID
+     */
+    public void removeFavoriteSong(String songId) {
+        favoriteSongs.remove(songId);
+        saveFavorites();
+        updateFavoritePlaylist(); // 更新我的收藏歌单
+    }
+    
+    /**
+     * 检查歌曲是否已收藏
+     * @param songId 歌曲ID
+     * @return 是否已收藏
+     */
+    public boolean isSongFavorited(String songId) {
+        return favoriteSongs.containsKey(songId);
+    }
+    
+    /**
+     * 获取所有收藏的歌曲
+     * @return 收藏的歌曲列表
+     */
+    public List<Song> getFavoriteSongs() {
+        return new ArrayList<>(favoriteSongs.values());
+    }
+    
+    /**
+     * 保存收藏歌曲数据
+     */
+    private void saveFavorites() {
+        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(FAVORITE_FILE))) {
+            oos.writeObject(favoriteSongs);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+    
+    /**
+     * 加载收藏歌曲数据
+     */
+    private void loadFavorites() {
+        try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(FAVORITE_FILE))) {
+            Map<String, Song> loaded = (Map<String, Song>) ois.readObject();
+            favoriteSongs.putAll(loaded);
+        } catch (FileNotFoundException e) {
+            // 文件不存在时忽略
+        } catch (IOException | ClassNotFoundException e) {
             e.printStackTrace();
         }
     }

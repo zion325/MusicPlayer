@@ -391,7 +391,7 @@ public class MainWindow extends JFrame {
         progressSlider = new JSlider(0, 100, 0);
         progressSlider.setPreferredSize(new Dimension(400, 20));
         
-        // 添加进度监听器
+        // 添进度监听器
         playerController.setProgressListener((current, total) -> {
             SwingUtilities.invokeLater(() -> {
                 if (!progressSlider.getValueIsAdjusting()) {
@@ -621,12 +621,37 @@ public class MainWindow extends JFrame {
         }
     }
     
+    /**
+     * 收藏/取消收藏歌曲
+     * @param song 要收藏/取消收藏的歌曲
+     */
     private void favoriteSong(Song song) {
-        // TODO: 实现收藏歌曲的逻辑
-        JOptionPane.showMessageDialog(this,
-            "已收藏：" + song.getTitle(),
-            "收藏提示",
-            JOptionPane.INFORMATION_MESSAGE);
+        boolean isFavorited = dataManager.isSongFavorited(song.getId());
+        
+        if (isFavorited) {
+            // 如果已收藏，则取消收藏
+            dataManager.removeFavoriteSong(song.getId());
+            JOptionPane.showMessageDialog(this,
+                "已取消收藏：" + song.getTitle(),
+                "取消收藏",
+                JOptionPane.INFORMATION_MESSAGE);
+        } else {
+            // 如果未收藏，则添加到收藏
+            if (dataManager.addFavoriteSong(song)) {
+                JOptionPane.showMessageDialog(this,
+                    "已收藏：" + song.getTitle(),
+                    "收藏成功",
+                    JOptionPane.INFORMATION_MESSAGE);
+            } else {
+                JOptionPane.showMessageDialog(this,
+                    "该歌曲已在收藏列表中",
+                    "提示",
+                    JOptionPane.WARNING_MESSAGE);
+            }
+        }
+        
+        // 更新表格中的收藏按钮状态
+        updateSongList(((Playlist)songTable.getClientProperty("currentPlaylist")));
     }
     
     private void updatePlayerInfo() {
@@ -694,7 +719,8 @@ public class MainWindow extends JFrame {
     }
     
     private void downloadAllSongs() {
-        String selectedPlaylist = myPlaylistList.getSelectedValue();
+        // String selectedPlaylist = myPlaylistList.getSelectedValue();
+        String selectedPlaylist = getCurrentSelectedPlaylist();
         if (selectedPlaylist == null) {
             JOptionPane.showMessageDialog(this,
                 "请先选择一个歌单",
@@ -772,8 +798,82 @@ public class MainWindow extends JFrame {
         }
     }
     
+    /**
+     * 将当前歌单添加到我的歌单
+     */
     private void addToMyPlaylist() {
-        // TODO: 实现添加到我的歌单的逻辑
+        // 获取当前选中的网友歌单
+        String selectedPlaylist = friendsPlaylistList.getSelectedValue();
+        if (selectedPlaylist == null) {
+            JOptionPane.showMessageDialog(this,
+                "请先选择一个网友歌单",
+                "提示",
+                JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        
+        // 获取歌单对象
+        Playlist sourcePlaylist = dataManager.getPlaylist(selectedPlaylist);
+        if (sourcePlaylist == null || sourcePlaylist.getSongs().isEmpty()) {
+            JOptionPane.showMessageDialog(this,
+                "歌单为空",
+                "提示",
+                JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        
+        // 创建新歌单名称（在原歌单名称后添加"的副本"）
+        String newPlaylistName = sourcePlaylist.getName() + "的副本";
+        
+        // 检查歌单名称是否已存在
+        int index = 1;
+        while (dataManager.getPlaylist(newPlaylistName) != null) {
+            newPlaylistName = sourcePlaylist.getName() + "的副本(" + index + ")";
+            index++;
+        }
+        
+        // 创建新歌单
+        Playlist newPlaylist = new Playlist(
+            String.valueOf(System.currentTimeMillis()),
+            newPlaylistName,
+            "学号10001"
+        );
+        
+        // 复制歌曲
+        for (Song song : sourcePlaylist.getSongs()) {
+            newPlaylist.addSong(song);
+        }
+        
+        // 复制封面（如果有）
+        if (sourcePlaylist.getCoverImagePath() != null) {
+            try {
+                File sourceFile = new File(sourcePlaylist.getCoverImagePath());
+                if (sourceFile.exists()) {
+                    String newCoverPath = MusicFileManager.saveCoverImage(sourceFile);
+                    newPlaylist.setCoverImagePath(newCoverPath);
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+                // 封面复制失败不影响整体功能
+            }
+        }
+        
+        // 添加到数管理器
+        dataManager.addPlaylist(newPlaylist);
+        
+        // 更新我的歌单列表
+        DefaultListModel<String> listModel = (DefaultListModel<String>) myPlaylistList.getModel();
+        listModel.addElement(newPlaylistName);
+        
+        // 显示成功提示
+        JOptionPane.showMessageDialog(this,
+            "已添加到我的歌单：" + newPlaylistName,
+            "添加成功",
+            JOptionPane.INFORMATION_MESSAGE);
+        
+        // 切换到我的歌单并选中新添加的歌单
+        myPlaylistList.setSelectedValue(newPlaylistName, true);
+        updateContentPanel(newPlaylistName);
     }
     
     private void changeCover() {
@@ -911,13 +1011,16 @@ public class MainWindow extends JFrame {
     // 修改自定义渲染器类
     private class ButtonsRenderer implements TableCellRenderer {
         private final JPanel panel;
+        private final JButton playButton;
+        private final JButton downloadButton;
+        private final JButton favoriteButton;
         
         public ButtonsRenderer() {
             panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 2));
             
-            JButton playButton = new JButton("播放");
-            JButton downloadButton = new JButton("下载");
-            JButton favoriteButton = new JButton("收藏");
+            playButton = new JButton("播放");
+            downloadButton = new JButton("下载");
+            favoriteButton = new JButton("收藏");
             
             Dimension buttonSize = new Dimension(60, 25);
             playButton.setPreferredSize(buttonSize);
@@ -932,6 +1035,12 @@ public class MainWindow extends JFrame {
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value,
                 boolean isSelected, boolean hasFocus, int row, int column) {
+            // 更新收藏按钮的文本
+            Playlist playlist = (Playlist)table.getClientProperty("currentPlaylist");
+            if (playlist != null && row >= 0 && row < playlist.getSongs().size()) {
+                Song song = playlist.getSongs().get(row);
+                favoriteButton.setText(dataManager.isSongFavorited(song.getId()) ? "取消收藏" : "收藏");
+            }
             return panel;
         }
     }
