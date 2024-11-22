@@ -6,23 +6,38 @@ import com.musicplayer.model.Playlist;
 import com.musicplayer.model.Song;
 import com.musicplayer.data.DataManager;
 import com.musicplayer.util.MusicFileManager;
+import com.musicplayer.model.OnlineMusicSheet;
+import com.musicplayer.util.StreamCache;
 
 import javax.swing.*;
 import java.awt.*;
 import javax.swing.table.DefaultTableModel;
 import java.util.List;
 import java.time.Duration;
-import java.time.LocalDateTime;
+
 import java.time.format.DateTimeFormatter;
+import java.io.BufferedInputStream;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import javax.swing.table.TableCellRenderer;
-import javax.swing.table.TableCellEditor;
+
+import org.jaudiotagger.audio.AudioFile;
+import org.jaudiotagger.audio.AudioFileIO;
+
+
 
 import java.awt.image.BufferedImage;
 import java.awt.geom.RoundRectangle2D;
 
 import javax.imageio.ImageIO;
+
+import java.util.Map;
+import java.util.HashMap;
+import java.io.InputStream;
+
+import java.util.ArrayList;
 
 public class MainWindow extends JFrame {
     private final PlayerController playerController;
@@ -40,7 +55,6 @@ public class MainWindow extends JFrame {
     private JLabel coverImageLabel;
     private DefaultTableModel songTableModel;
     private final DataManager dataManager = DataManager.getInstance();
-    private JLabel currentSongLabel;
     private Song currentPlayingSong;
     private JLabel songTitleLabel;
     private JLabel songArtistLabel;
@@ -51,11 +65,23 @@ public class MainWindow extends JFrame {
     private JButton downloadAllButton;
     private JButton addToMyPlaylistButton;
     private JButton changeCoverButton;
+    private Map<String, OnlineMusicSheet> onlineSheetMap = new HashMap<>();
+    private JTextField searchField;
+    private DefaultListModel<String> friendsListModel;
     
     public MainWindow() {
         this.playerController = new PlayerController();
         initializeComponents();
         initializeUI();
+        
+        // 添加窗口关闭事件处理
+        addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowClosing(java.awt.event.WindowEvent windowEvent) {
+                // 清理缓存
+                StreamCache.clearCache();
+            }
+        });
     }
     
     private void initializeComponents() {
@@ -103,39 +129,121 @@ public class MainWindow extends JFrame {
         
         // 创建垂直分割的面板
         JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
-        splitPane.setDividerLocation(400); // 设置分割位置
-        splitPane.setDividerSize(1); // 设置分割线宽度
+        splitPane.setDividerLocation(400);
+        splitPane.setDividerSize(1);
         
         // 创建网友歌单面板（上半部分）
         JPanel friendsPanel = new JPanel(new BorderLayout());
-        JLabel friendsLabel = new JLabel("网友歌单", SwingConstants.LEFT);
-        friendsLabel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-        friendsLabel.setFont(new Font("微软雅黑", Font.BOLD, 14));
-        friendsPanel.add(friendsLabel, BorderLayout.NORTH);
         
-        // 创建网友歌单列表
-        DefaultListModel<String> friendsListModel = new DefaultListModel<>();
+        // 创建标题和搜索面板
+        JPanel headerPanel = new JPanel(new BorderLayout());
+        headerPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 5, 10));
+        
+        // 创建标题标签
+        JLabel friendsLabel = new JLabel("网友歌单", SwingConstants.LEFT);
+        friendsLabel.setFont(new Font("微软雅黑", Font.BOLD, 14));
+        
+        // 创建搜索面板
+        JPanel searchPanel = new JPanel(new BorderLayout(5, 0));
+        searchPanel.setBorder(BorderFactory.createEmptyBorder(5, 0, 5, 0));  // 调整边距
+        
+        // 创建搜索图标标签
+        JLabel searchIcon = new JLabel("🔍");
+        searchIcon.setFont(new Font("Dialog", Font.PLAIN, 12));
+        searchIcon.setForeground(Color.WHITE);  // 设置为白色
+        
+        // 创建搜索文本框
+        searchField = new JTextField();
+        searchField.setToolTipText("搜索歌单");
+        searchField.setPreferredSize(new Dimension(0, 20));  // 设置高度
+        searchField.setForeground(Color.WHITE);  // 设置文字颜色为白色
+        searchField.setCaretColor(Color.WHITE);  // 设置光标颜色为白色
+        searchField.setBackground(new Color(60, 63, 65));  // 设置深色背景
+        
+        // 设置搜索框的边框和内边距
+        searchField.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(80, 83, 85), 1),  // 稍微亮一点的边框
+            BorderFactory.createEmptyBorder(1, 5, 1, 5)
+        ));
+        
+        // 添加占位符文本
+        searchField.setText("搜索歌单");
+        searchField.setForeground(Color.GRAY);
+        
+        // 添加占位符监听器
+        searchField.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusGained(java.awt.event.FocusEvent e) {
+                if (searchField.getText().equals("搜索歌单")) {
+                    searchField.setText("");
+                    searchField.setForeground(Color.WHITE);  // 修改为白色
+                }
+            }
+            
+            @Override
+            public void focusLost(java.awt.event.FocusEvent e) {
+                if (searchField.getText().isEmpty()) {
+                    searchField.setText("搜索歌单");
+                    searchField.setForeground(Color.GRAY);
+                }
+            }
+        });
+        
+        // 组装搜索面板
+        searchPanel.add(searchIcon, BorderLayout.WEST);
+        searchPanel.add(searchField, BorderLayout.CENTER);
+        
+        // 组装标题和搜索面板
+        headerPanel.add(friendsLabel, BorderLayout.NORTH);
+        headerPanel.add(searchPanel, BorderLayout.CENTER);
+        
+        // 初始化列表模型和列表
+        friendsListModel = new DefaultListModel<>();
         friendsPlaylistList = new JList<>(friendsListModel);
         friendsPlaylistList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         
         // 加载网友歌单
-        for (Playlist playlist : dataManager.getAllPlaylists()) {
-            if (!playlist.getOwnerId().equals("学号10001")) {
-                friendsListModel.addElement(playlist.getName());
-            }
-        }
+        loadFriendsPlaylists();
+        
+        // 添加搜索监听器
+        searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { filterPlaylists(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { filterPlaylists(); }
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { filterPlaylists(); }
+        });
         
         // 添加网友歌单选择监听器
         friendsPlaylistList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 String selectedPlaylist = friendsPlaylistList.getSelectedValue();
                 if (selectedPlaylist != null) {
-                    updateContentPanel(selectedPlaylist);
-                    myPlaylistList.clearSelection(); // 清除我的歌单的选择
+                    // 清除我的歌单的选择
+                    myPlaylistList.clearSelection();
+                    
+                    if (selectedPlaylist.equals("未找到匹配的歌单")) {
+                        // 如果是提示文本，不进行处理
+                        return;
+                    }
+                    
+                    if (selectedPlaylist.startsWith("[在线] ")) {
+                        // 处理在线歌单
+                        OnlineMusicSheet onlineSheet = onlineSheetMap.get(selectedPlaylist);
+                        if (onlineSheet != null) {
+                            displayOnlinePlaylist(onlineSheet);
+                        }
+                    } else {
+                        // 处理本地网友歌单
+                        Playlist playlist = dataManager.getPlaylist(selectedPlaylist);
+                        if (playlist != null) {
+                            displayPlaylist(playlist);
+                        }
+                    }
                 }
             }
         });
         
+        // 组装网友歌单面板
+        friendsPanel.add(headerPanel, BorderLayout.NORTH);
         friendsPanel.add(new JScrollPane(friendsPlaylistList), BorderLayout.CENTER);
         
         // 创建我的歌单面板（下半部分）
@@ -228,7 +336,7 @@ public class MainWindow extends JFrame {
             }
         });
         
-        // 添加导入音乐按钮事件
+        // 添加导入音乐按钮件
         importButton.addActionListener(e -> importMusic());
         
         buttonPanel.add(createButton);
@@ -406,7 +514,7 @@ public class MainWindow extends JFrame {
         // 创建控制按钮面板
         JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
         JButton prevButton = new JButton("上一首");
-        playButton = new JButton("播放");
+        playButton = new JButton("继续");
         JButton nextButton = new JButton("下一首");
         modeButton = new JButton("顺序播放");
         
@@ -440,20 +548,40 @@ public class MainWindow extends JFrame {
             updatePlayModeButton(newMode);
         });
         
-        // 添加播放/暂停按钮事件
+        // 修改播放/暂停按钮事件处理
         playButton.addActionListener(e -> {
             if (currentPlayingSong != null) {
                 if (playerController.isPlaying()) {
+                    // 暂停播放
                     playerController.pause();
-                    playButton.setText("播放");
+                    playButton.setText("继续");
                 } else {
-                    playerController.resume();
+                    // 继续播放
+                    if (playerController.isOnlinePlayback()) {
+                        // 在线歌曲
+                        if (playerController.needNewStream()) {
+                            // 需要新流时重新获取
+                            playOnlineSong(currentPlayingSong);
+                        } else {
+                            // 不需要新流时直接继续
+                            playerController.resume();
+                        }
+                    } else {
+                        // 本地歌曲
+                        if (currentPlayingSong.getFilePath() != null) {
+                            // 如果是暂停状态，继续播放
+                            playerController.resume();
+                        } else {
+                            // 如果文件路径丢失，重新播放
+                            playerController.play();
+                        }
+                    }
                     playButton.setText("暂停");
                 }
             }
         });
         
-        // 添加上一首按钮事件
+        // 添上一首按钮事件
         prevButton.addActionListener(e -> {
             playerController.previous();
             updatePlayerInfo();
@@ -470,7 +598,7 @@ public class MainWindow extends JFrame {
         controlPanel.add(nextButton);
         controlPanel.add(modeButton);
         
-        // 使用BorderLayout布局添加各个面板
+        // 使BorderLayout布局添加各个面板
         panel.add(songInfoPanel, BorderLayout.WEST);
         panel.add(progressPanel, BorderLayout.CENTER);
         panel.add(controlPanel, BorderLayout.SOUTH);
@@ -479,32 +607,150 @@ public class MainWindow extends JFrame {
     }
     
     /**
+     * 加载网友歌单（包括本地和在线歌单）
+     */
+    private void loadFriendsPlaylists() {
+        friendsListModel.clear();
+        onlineSheetMap.clear();
+        
+        // 加载本地网友歌单
+        for (Playlist playlist : dataManager.getAllPlaylists()) {
+            if (!playlist.getOwnerId().equals("学号10001")) {
+                friendsListModel.addElement(playlist.getName());
+            }
+        }
+        
+        // 加载在线歌单
+        try {
+            List<OnlineMusicSheet> onlineSheets = dataManager.getOnlineMusicSheets();
+            for (OnlineMusicSheet sheet : onlineSheets) {
+                String displayName = "[在线] " + sheet.getName();
+                friendsListModel.addElement(displayName);
+                onlineSheetMap.put(displayName, sheet);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this,
+                "加载在线歌单失败: " + e.getMessage(),
+                "错误",
+                JOptionPane.ERROR_MESSAGE);
+        }
+    }
+    
+    /**
      * 更新歌单内容面板
-     * @param playlistName 歌单名称
      */
     private void updateContentPanel(String playlistName) {
-        // 根据歌单名称查找对应的歌单
-        Playlist playlist = findPlaylist(playlistName);
-        if (playlist == null) {
+        if (playlistName == null || playlistName.equals("未找到匹配的歌单")) {
             return;
         }
         
+        if (playlistName.startsWith("[在线] ")) {
+            // 处理在线歌单
+            OnlineMusicSheet onlineSheet = onlineSheetMap.get(playlistName);
+            if (onlineSheet != null) {
+                displayOnlinePlaylist(onlineSheet);
+            }
+        } else {
+            // 处理本地歌单
+            Playlist playlist = dataManager.getPlaylist(playlistName);
+            if (playlist != null) {
+                displayPlaylist(playlist);
+            }
+        }
+    }
+    
+    /**
+     * 显示在线歌单内容
+     */
+    private void displayOnlinePlaylist(OnlineMusicSheet onlineSheet) {
         // 更新歌单信息
-        playlistNameLabel.setText(playlist.getName());
-        playlistOwnerLabel.setText("创建者：" + playlist.getOwnerId());
+        playlistNameLabel.setText(onlineSheet.getName());
+        playlistOwnerLabel.setText("创建者：" + onlineSheet.getCreator());
+        playlistDateLabel.setText("创建时间：" + onlineSheet.getDateCreated());
         
-        // 格式化创建时间
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
-        playlistDateLabel.setText("创建时间：" + playlist.getCreateDate().format(formatter));
+        // 更新封面图片（如果有）
+        if (onlineSheet.getPicture() != null && !onlineSheet.getPicture().isEmpty()) {
+            try {
+                // 下载并显示封面
+                InputStream coverStream = dataManager.getMusicServerAPI().downloadPicture(onlineSheet.getUuid());
+                BufferedImage coverImage = ImageIO.read(coverStream);
+                if (coverImage != null) {
+                    BufferedImage roundedImage = createRoundedImage(coverImage);
+                    coverImageLabel.setIcon(new ImageIcon(roundedImage));
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+                setDefaultCoverImage();
+            }
+        } else {
+            setDefaultCoverImage();
+        }
         
-        // 更新封面图片
-        updateCoverImage(playlist.getCoverImagePath());
+        // 清空表格
+        DefaultTableModel model = (DefaultTableModel) songTable.getModel();
+        model.setRowCount(0);
         
-        // 更新歌曲列表
-        updateSongList(playlist);
+        // 保存当前播放列表供按钮使用
+        songTable.putClientProperty("currentPlaylist", onlineSheet);
+        
+        // 添加歌曲到表格
+        int index = 0;
+        for (Map.Entry<String, String> entry : onlineSheet.getMusicItems().entrySet()) {
+            model.addRow(new Object[]{
+                index + 1,                    // 序号
+                entry.getValue(),             // 文件名（歌曲名）
+                "在线音乐",                   // 艺术家
+                "加载中...",                  // 时长（异步加载）
+                entry.getKey(),               // MD5值（用于下载和播放）
+                ""                            // 操作列（由渲染器处理）
+            });
+            
+            // 异步加载时长
+            final int rowIndex = index;
+            new Thread(() -> {
+                try {
+                    // 获取文头信息来计算时长
+                    InputStream is = dataManager.getMusicServerAPI().streamMusic(entry.getKey());
+                    BufferedInputStream bis = new BufferedInputStream(is);
+                    Duration duration = MusicFileManager.getMp3DurationFromStream(bis);
+                    
+                    // 更新表格
+                    SwingUtilities.invokeLater(() -> {
+                        model.setValueAt(formatDuration(duration), rowIndex, 3);
+                    });
+                    
+                    bis.close();
+                    is.close();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    SwingUtilities.invokeLater(() -> {
+                        model.setValueAt("--:--", rowIndex, 3);
+                    });
+                }
+            }).start();
+            
+            index++;
+        }
         
         // 更新按钮显示
-        updateButtonVisibility(playlist);
+        updateButtonVisibilityForOnlinePlaylist();
+    }
+    
+    /**
+     * 新在线歌单的按钮显示
+     */
+    private void updateButtonVisibilityForOnlinePlaylist() {
+        JPanel buttonPanel = (JPanel) infoPanel.getComponent(infoPanel.getComponentCount() - 1);
+        buttonPanel.removeAll();
+        
+        // 显示在线歌单特有的按钮
+        buttonPanel.add(playAllButton);
+        buttonPanel.add(downloadAllButton);
+        buttonPanel.add(addToMyPlaylistButton);
+        
+        buttonPanel.revalidate();
+        buttonPanel.repaint();
     }
     
     /**
@@ -561,7 +807,7 @@ public class MainWindow extends JFrame {
                 currentPlayingSong.equals(song)) {
                 if (playerController.isPlaying()) {
                     playerController.pause();
-                    playButton.setText("播放");
+                    playButton.setText("继续");
                 } else {
                     playerController.resume();
                     playButton.setText("暂停");
@@ -586,7 +832,7 @@ public class MainWindow extends JFrame {
         } catch (Exception e) {
             e.printStackTrace();
             JOptionPane.showMessageDialog(this,
-                "播放出错：" + e.getMessage(),
+                "播放错：" + e.getMessage(),
                 "错误",
                 JOptionPane.ERROR_MESSAGE);
         }
@@ -594,7 +840,7 @@ public class MainWindow extends JFrame {
     
     /**
      * 下载歌曲
-     * @param song 要下载的歌曲
+     * @param song 要下的歌曲
      */
     private void downloadSong(Song song) {
         JFileChooser fileChooser = new JFileChooser();
@@ -659,11 +905,16 @@ public class MainWindow extends JFrame {
         if (currentSong != null) {
             currentPlayingSong = currentSong;
             updateCurrentSongLabel();
+            
+            // 如果是在线播放且需要新流，重新获取流并播放
+            if (playerController.isOnlinePlayback() && playerController.needNewStream()) {
+                playOnlineSong(currentSong);
+            }
         }
     }
     
     /**
-     * 获取当前选中的歌单
+     * 获当前选中的歌单
      * 从两个列表中获取当前选中的歌单名称
      * @return 当前选中的歌单名称，如果没有选中则返回null
      */
@@ -691,48 +942,136 @@ public class MainWindow extends JFrame {
             return;
         }
         
-        Playlist playlist = dataManager.getPlaylist(selectedPlaylist);
-        if (playlist == null || playlist.getSongs().isEmpty()) {
-            JOptionPane.showMessageDialog(this,
-                "歌单为空",
-                "提示",
-                JOptionPane.WARNING_MESSAGE);
-            return;
+        // 停止当前播放，因为要开始新的播放
+        if (playerController.isPlaying()) {
+            playerController.stop();
         }
         
-        playerController.setCurrentPlaylist(playlist);
-        
-        // 根据当前播放模式选择第一首歌
-        if (playerController.getPlayMode() == PlayerController.PlayMode.RANDOM) {
-            // 随机模式下随机选择一首歌
-            int randomIndex = (int) (Math.random() * playlist.getSongs().size());
-            playerController.setCurrentSong(playlist.getSongs().get(randomIndex));
+        if (selectedPlaylist.startsWith("[在线] ")) {
+            // 播放在线歌单
+            OnlineMusicSheet onlineSheet = onlineSheetMap.get(selectedPlaylist);
+            if (onlineSheet == null || onlineSheet.getMusicItems().isEmpty()) {
+                JOptionPane.showMessageDialog(this,
+                    "歌单为空",
+                    "提示",
+                    JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            
+            // 创建临时播放列表
+            List<Song> onlineSongs = new ArrayList<>();
+            for (Map.Entry<String, String> entry : onlineSheet.getMusicItems().entrySet()) {
+                Song song = new Song(
+                    entry.getKey(),  // 使用MD5作为ID
+                    entry.getValue(), // 文件名作为标题
+                    "在线音乐",      // 艺术家
+                    Duration.ZERO,   // 临时设置为0
+                    entry.getKey()   // 使用MD5作为文件路径标识
+                );
+                onlineSongs.add(song);
+            }
+            
+            // 设置播放列表
+            playerController.setOnlinePlaylist(onlineSongs);
+            
+            // 开始播放第一首歌
+            if (!onlineSongs.isEmpty()) {
+                playerController.setCurrentSong(onlineSongs.get(0));
+                playOnlineSong(onlineSongs.get(0));
+            }
         } else {
-            // 其他模式从第一首开始播放
-            playerController.setCurrentSong(playlist.getSongs().get(0));
+            // 播放本地歌单
+            playerController.clearOnlinePlaylist(); // 清除在线播放列表
+            Playlist playlist = dataManager.getPlaylist(selectedPlaylist);
+            if (playlist == null || playlist.getSongs().isEmpty()) {
+                JOptionPane.showMessageDialog(this,
+                    "歌单为空",
+                    "提示",
+                    JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            
+            playerController.setCurrentPlaylist(playlist);
+            
+            // 根据当前播放模式选择第一首歌
+            if (playerController.getPlayMode() == PlayerController.PlayMode.RANDOM) {
+                int randomIndex = (int) (Math.random() * playlist.getSongs().size());
+                playerController.setCurrentSong(playlist.getSongs().get(randomIndex));
+            } else {
+                playerController.setCurrentSong(playlist.getSongs().get(0));
+            }
+            
+            playerController.play();
+            playButton.setText("暂停");
+            currentPlayingSong = playerController.getCurrentSong();
+            updateCurrentSongLabel();
         }
-        
-        playerController.play();
-        playButton.setText("暂停");
-        currentPlayingSong = playerController.getCurrentSong();
-        updateCurrentSongLabel();
+    }
+    
+    /**
+     * 播放在线歌曲
+     */
+    private void playOnlineSong(Song song) {
+        try {
+            if (currentPlayingSong != null && 
+                currentPlayingSong.equals(song) && 
+                playerController.isOnlinePlayback() && 
+                !playerController.needNewStream()) {
+                // 如果是同一首歌且不需要新流，则继续播放
+                playerController.resume();
+                playButton.setText("暂停");
+                return;
+            }
+            
+            // 检查是否有缓存
+            final File cachedFile = StreamCache.getCachedFile(song.getId());
+            final File musicFile;
+            
+            if (cachedFile == null) {
+                // 没有缓存，下载并缓存
+                InputStream musicStream = dataManager.getMusicServerAPI().streamMusic(song.getId());
+                musicFile = StreamCache.cacheStream(song.getId(), musicStream);
+            } else {
+                musicFile = cachedFile;
+            }
+            
+            // 使用缓存的文件播放
+            currentPlayingSong = song;
+            // 设置一个默认时长（3分钟）
+            song.setDuration(Duration.ofMinutes(3));
+            playerController.setCurrentSong(song);
+            playerController.playOnlineStream(new FileInputStream(musicFile));
+            playButton.setText("暂停");
+            updateCurrentSongLabel();
+            
+            // 异步获取实际时长
+            new Thread(() -> {
+                try {
+                    AudioFile audioFile = AudioFileIO.read(musicFile);
+                    int durationInSeconds = audioFile.getAudioHeader().getTrackLength();
+                    song.setDuration(Duration.ofSeconds(durationInSeconds));
+                    SwingUtilities.invokeLater(this::updateCurrentSongLabel);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    // 保持默认时长
+                    SwingUtilities.invokeLater(this::updateCurrentSongLabel);
+                }
+            }).start();
+            
+        } catch (IOException e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this,
+                "播放失败：" + e.getMessage(),
+                "错误",
+                JOptionPane.ERROR_MESSAGE);
+        }
     }
     
     private void downloadAllSongs() {
-        // String selectedPlaylist = myPlaylistList.getSelectedValue();
         String selectedPlaylist = getCurrentSelectedPlaylist();
         if (selectedPlaylist == null) {
             JOptionPane.showMessageDialog(this,
                 "请先选择一个歌单",
-                "提示",
-                JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-        
-        Playlist playlist = dataManager.getPlaylist(selectedPlaylist);
-        if (playlist == null || playlist.getSongs().isEmpty()) {
-            JOptionPane.showMessageDialog(this,
-                "歌单为空",
                 "提示",
                 JOptionPane.WARNING_MESSAGE);
             return;
@@ -749,7 +1088,7 @@ public class MainWindow extends JFrame {
             
             // 创建进度对话框
             JDialog progressDialog = new JDialog(this, "下载进度", true);
-            JProgressBar progressBar = new JProgressBar(0, playlist.getSongs().size());
+            JProgressBar progressBar = new JProgressBar();
             JLabel statusLabel = new JLabel("正在下载...");
             
             progressDialog.setLayout(new BorderLayout(10, 10));
@@ -761,33 +1100,50 @@ public class MainWindow extends JFrame {
             // 在后台线程中执行下载
             Thread downloadThread = new Thread(() -> {
                 int successCount = 0;
-                int totalCount = playlist.getSongs().size();
+                int totalCount = 0;  // 初始化为0
                 
-                for (Song song : playlist.getSongs()) {
-                    try {
-                        // 更新状态
-                        SwingUtilities.invokeLater(() -> {
-                            statusLabel.setText("正在下载: " + song.getTitle());
-                            progressBar.setValue(progressBar.getValue() + 1);
-                        });
+                if (selectedPlaylist.startsWith("[在线] ")) {
+                    // 下载在线歌单
+                    OnlineMusicSheet onlineSheet = onlineSheetMap.get(selectedPlaylist);
+                    if (onlineSheet != null) {
+                        Map<String, String> musicItems = onlineSheet.getMusicItems();
+                        totalCount = musicItems.size();
+                        progressBar.setMaximum(totalCount);
                         
-                        // 复制文件
-                        File sourceFile = new File(song.getFilePath());
-                        File targetFile = new File(downloadDir, song.getTitle() + ".mp3");
-                        org.apache.commons.io.FileUtils.copyFile(sourceFile, targetFile);
-                        
-                        successCount++;
-                    } catch (IOException e) {
-                        e.printStackTrace();
+                        for (Map.Entry<String, String> entry : musicItems.entrySet()) {
+                            try {
+                                final String filename = entry.getValue();
+                                // 更新状态
+                                SwingUtilities.invokeLater(() -> {
+                                    statusLabel.setText("正在下载: " + filename);
+                                    progressBar.setValue(progressBar.getValue() + 1);
+                                });
+                                
+                                // 下载文件
+                                InputStream is = dataManager.getMusicServerAPI().downloadMusic(entry.getKey());
+                                File targetFile = new File(downloadDir, filename);
+                                try (FileOutputStream fos = new FileOutputStream(targetFile)) {
+                                    byte[] buffer = new byte[8192];
+                                    int bytesRead;
+                                    while ((bytesRead = is.read(buffer)) != -1) {
+                                        fos.write(buffer, 0, bytesRead);
+                                    }
+                                }
+                                successCount++;
+                            } catch (IOException e) {
+                                e.printStackTrace();
+                            }
+                        }
                     }
                 }
                 
                 // 下载完成后显示结果
                 final int finalSuccessCount = successCount;
+                final int finalTotalCount = totalCount;
                 SwingUtilities.invokeLater(() -> {
                     progressDialog.dispose();
                     JOptionPane.showMessageDialog(this,
-                        String.format("下载完成\n成功: %d/%d", finalSuccessCount, totalCount),
+                        String.format("下载完成\n成功: %d/%d", finalSuccessCount, finalTotalCount),
                         "下载结果",
                         JOptionPane.INFORMATION_MESSAGE);
                 });
@@ -812,7 +1168,7 @@ public class MainWindow extends JFrame {
             return;
         }
         
-        // 获取歌单对象
+        // 取歌单对象
         Playlist sourcePlaylist = dataManager.getPlaylist(selectedPlaylist);
         if (sourcePlaylist == null || sourcePlaylist.getSongs().isEmpty()) {
             JOptionPane.showMessageDialog(this,
@@ -865,13 +1221,13 @@ public class MainWindow extends JFrame {
         DefaultListModel<String> listModel = (DefaultListModel<String>) myPlaylistList.getModel();
         listModel.addElement(newPlaylistName);
         
-        // 显示成功提示
+        // 显示成提示
         JOptionPane.showMessageDialog(this,
             "已添加到我的歌单：" + newPlaylistName,
             "添加成功",
             JOptionPane.INFORMATION_MESSAGE);
         
-        // 切换到我的歌单并选中新添加的歌单
+        // 切换到我的歌单并选中添加的歌单
         myPlaylistList.setSelectedValue(newPlaylistName, true);
         updateContentPanel(newPlaylistName);
     }
@@ -898,7 +1254,7 @@ public class MainWindow extends JFrame {
                 // 保存新的封面图片
                 String newCoverPath = MusicFileManager.saveCoverImage(selectedFile);
                 
-                // 更新歌单的封面路径
+                // 更歌单的封面路径
                 Playlist playlist = dataManager.getPlaylist(selectedPlaylist);
                 if (playlist != null) {
                     // 删除旧的封面图片
@@ -983,9 +1339,18 @@ public class MainWindow extends JFrame {
         if (currentPlayingSong != null) {
             songTitleLabel.setText(currentPlayingSong.getTitle());
             songArtistLabel.setText(currentPlayingSong.getArtist());
-            long totalSeconds = currentPlayingSong.getDuration().getSeconds();
-            songProgressLabel.setText(String.format("00:00 / %02d:%02d",
-                totalSeconds / 60, totalSeconds % 60));
+            
+            // 更新时长显示
+            Duration duration = currentPlayingSong.getDuration();
+            if (duration != null && !duration.isZero()) {
+                long totalSeconds = duration.getSeconds();
+                songProgressLabel.setText(String.format("00:00 / %02d:%02d",
+                    totalSeconds / 60, totalSeconds % 60));
+            } else if (playerController.isOnlinePlayback()) {
+                songProgressLabel.setText("00:00 / 03:00");
+            } else {
+                songProgressLabel.setText("00:00 / 00:00");
+            }
         } else {
             songTitleLabel.setText("未播放");
             songArtistLabel.setText("");
@@ -995,20 +1360,33 @@ public class MainWindow extends JFrame {
     
     /**
      * 更新进度标签
-     * @param current 当前进度值
-     * @param total 总进度值
      */
     private void updateProgressLabel(int current, int total) {
         if (currentPlayingSong != null) {
-            long totalSeconds = currentPlayingSong.getDuration().getSeconds();
-            long currentSeconds = (totalSeconds * current) / 100;
-            songProgressLabel.setText(String.format("%02d:%02d / %02d:%02d",
-                currentSeconds / 60, currentSeconds % 60,
-                totalSeconds / 60, totalSeconds % 60));
+            Duration duration = currentPlayingSong.getDuration();
+            if (duration != null && !duration.isZero()) {
+                // 有时长信息时，显示具体时间
+                long totalSeconds = duration.getSeconds();
+                long currentSeconds = (totalSeconds * current) / total;
+                songProgressLabel.setText(String.format("%02d:%02d / %02d:%02d",
+                    currentSeconds / 60, currentSeconds % 60,
+                    totalSeconds / 60, totalSeconds % 60));
+            } else if (playerController.isOnlinePlayback()) {
+                // 在线音乐播放时，使用3分钟作为默认时长
+                long totalSeconds = 3 * 60; // 3分钟
+                long currentSeconds = (totalSeconds * current) / total;
+                songProgressLabel.setText(String.format("%02d:%02d / 03:00",
+                    currentSeconds / 60, currentSeconds % 60));
+            } else {
+                // 其他情况显示百分比
+                songProgressLabel.setText(String.format("%d%% / 100%%", current));
+            }
+        } else {
+            songProgressLabel.setText("00:00 / 00:00");
         }
     }
     
-    // 修改自定义渲染器类
+    // 修改自定义渲染类
     private class ButtonsRenderer implements TableCellRenderer {
         private final JPanel panel;
         private final JButton playButton;
@@ -1035,11 +1413,17 @@ public class MainWindow extends JFrame {
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value,
                 boolean isSelected, boolean hasFocus, int row, int column) {
-            // 更新收藏按钮的文本
-            Playlist playlist = (Playlist)table.getClientProperty("currentPlaylist");
-            if (playlist != null && row >= 0 && row < playlist.getSongs().size()) {
-                Song song = playlist.getSongs().get(row);
-                favoriteButton.setText(dataManager.isSongFavorited(song.getId()) ? "取消收藏" : "收藏");
+            Object playlistObj = table.getClientProperty("currentPlaylist");
+            if (playlistObj instanceof Playlist) {
+                // 本地歌单
+                Playlist playlist = (Playlist) playlistObj;
+                if (playlist != null && row >= 0 && row < playlist.getSongs().size()) {
+                    Song song = playlist.getSongs().get(row);
+                    favoriteButton.setText(dataManager.isSongFavorited(song.getId()) ? "取消收藏" : "收藏");
+                }
+            } else if (playlistObj instanceof OnlineMusicSheet) {
+                // 在线歌单 - 所有歌曲都显示"收藏"按钮
+                favoriteButton.setText("收藏");
             }
             return panel;
         }
@@ -1053,7 +1437,7 @@ public class MainWindow extends JFrame {
         private final JButton favoriteButton;
         
         public ButtonsEditor(JTable table) {
-            super(new JCheckBox()); // 使用JCheckBox作为默认编辑器
+            super(new JCheckBox());
             
             panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 2));
             
@@ -1066,32 +1450,71 @@ public class MainWindow extends JFrame {
             downloadButton.setPreferredSize(buttonSize);
             favoriteButton.setPreferredSize(buttonSize);
             
+            // 修改播放按钮事件处理
             playButton.addActionListener(e -> {
                 int row = table.getEditingRow();
                 if (row != -1) {
-                    Song song = ((Playlist)table.getClientProperty("currentPlaylist"))
-                        .getSongs().get(row);
-                    playSong(song);
+                    Object playlistObj = table.getClientProperty("currentPlaylist");
+                    if (playlistObj instanceof Playlist) {
+                        // 本地歌单
+                        Playlist playlist = (Playlist) playlistObj;
+                        Song song = playlist.getSongs().get(row);
+                        playerController.clearOnlinePlaylist();
+                        playSong(song);
+                    } else if (playlistObj instanceof OnlineMusicSheet) {
+                        // 在线歌单
+                        String md5 = (String) table.getValueAt(row, 4); // 获取MD5值
+                        String filename = (String) table.getValueAt(row, 1); // 获取文件名
+                        
+                        Song song = new Song(
+                            md5,        // 使用MD5作为ID
+                            filename,   // 文件名作为标题
+                            "在线音乐", // 艺术家
+                            Duration.ZERO, // 临时设置为0
+                            md5        // 使用MD5作为文件路径标识
+                        );
+                        playOnlineSong(song);
+                    }
                 }
                 fireEditingStopped();
             });
             
+            // 修改下载按钮事件处理
             downloadButton.addActionListener(e -> {
                 int row = table.getEditingRow();
                 if (row != -1) {
-                    Song song = ((Playlist)table.getClientProperty("currentPlaylist"))
-                        .getSongs().get(row);
-                    downloadSong(song);
+                    Object playlistObj = table.getClientProperty("currentPlaylist");
+                    if (playlistObj instanceof Playlist) {
+                        // 本地歌单
+                        Playlist playlist = (Playlist) playlistObj;
+                        Song song = playlist.getSongs().get(row);
+                        downloadSong(song);
+                    } else if (playlistObj instanceof OnlineMusicSheet) {
+                        // 在线歌单
+                        String md5 = (String) table.getValueAt(row, 4);
+                        String filename = (String) table.getValueAt(row, 1);
+                        downloadOnlineSong(md5, filename);
+                    }
                 }
                 fireEditingStopped();
             });
             
+            // 修改收藏按钮事件处理
             favoriteButton.addActionListener(e -> {
                 int row = table.getEditingRow();
                 if (row != -1) {
-                    Song song = ((Playlist)table.getClientProperty("currentPlaylist"))
-                        .getSongs().get(row);
-                    favoriteSong(song);
+                    Object playlistObj = table.getClientProperty("currentPlaylist");
+                    if (playlistObj instanceof Playlist) {
+                        // 本歌单
+                        Playlist playlist = (Playlist) playlistObj;
+                        Song song = playlist.getSongs().get(row);
+                        favoriteSong(song);
+                    } else if (playlistObj instanceof OnlineMusicSheet) {
+                        // 在线歌单 - 需要先下载再收藏
+                        String md5 = (String) table.getValueAt(row, 4);
+                        String filename = (String) table.getValueAt(row, 1);
+                        downloadAndFavoriteOnlineSong(md5, filename);
+                    }
                 }
                 fireEditingStopped();
             });
@@ -1111,16 +1534,84 @@ public class MainWindow extends JFrame {
         public Object getCellEditorValue() {
             return "";
         }
+    }
+    
+    // 添加新的辅助方法
+    private void downloadOnlineSong(String md5, String filename) {
+        // 显示文件保存对话框
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setSelectedFile(new File(filename));
+        fileChooser.setDialogTitle("保存音乐文件");
         
-        @Override
-        public boolean shouldSelectCell(java.util.EventObject anEvent) {
-            return true;
+        int result = fileChooser.showSaveDialog(this);
+        if (result == JFileChooser.APPROVE_OPTION) {
+            try {
+                // 获取选择的保存路径
+                File targetFile = fileChooser.getSelectedFile();
+                
+                // 下载文件
+                InputStream is = dataManager.getMusicServerAPI().downloadMusic(md5);
+                try (FileOutputStream fos = new FileOutputStream(targetFile)) {
+                    byte[] buffer = new byte[8192];
+                    int bytesRead;
+                    while ((bytesRead = is.read(buffer)) != -1) {
+                        fos.write(buffer, 0, bytesRead);
+                    }
+                }
+                
+                JOptionPane.showMessageDialog(this,
+                    "下载完成：" + filename,
+                    "下载成功",
+                    JOptionPane.INFORMATION_MESSAGE);
+                
+            } catch (Exception e) {
+                e.printStackTrace();
+                JOptionPane.showMessageDialog(this,
+                    "下载失败：" + e.getMessage(),
+                    "错误",
+                    JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+    
+    private void downloadAndFavoriteOnlineSong(String md5, String filename) {
+        try {
+            // 先下载歌曲
+            dataManager.downloadOnlineMusic(md5, filename);
+            
+            // 创建Song对象
+            String filePath = MusicFileManager.saveOnlineMusicFile(
+                dataManager.getMusicServerAPI().downloadMusic(md5),
+                filename
+            );
+            
+            Song song = new Song(
+                md5,
+                filename,
+                "在线音乐",
+                Duration.ZERO,
+                filePath
+            );
+            
+            // 添加到收藏
+            if (dataManager.addFavoriteSong(song)) {
+                JOptionPane.showMessageDialog(this,
+                    "已收藏：" + filename,
+                    "收藏成功",
+                    JOptionPane.INFORMATION_MESSAGE);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this,
+                "收藏失败：" + e.getMessage(),
+                "错误",
+                JOptionPane.ERROR_MESSAGE);
         }
     }
     
     // 添加设置默认封面的方法
     private void setDefaultCoverImage() {
-        // 加载默认封面图片（需要准备一个默认封面图片）
+        // 加默认封面图片（需要准备一个默认封面图片）
         ImageIcon defaultIcon = new ImageIcon(getClass().getResource("/images/default_cover.png"));
         if (defaultIcon.getImageLoadStatus() == MediaTracker.COMPLETE) {
             Image scaledImage = defaultIcon.getImage().getScaledInstance(180, 180, Image.SCALE_SMOOTH);
@@ -1132,7 +1623,7 @@ public class MainWindow extends JFrame {
         }
     }
     
-    // 添加创建圆角图片的方法
+    // 添加创建圆角图片的方
     private BufferedImage createRoundedImage(BufferedImage image) {
         int width = 180;
         int height = 180;
@@ -1228,5 +1719,96 @@ public class MainWindow extends JFrame {
             // 显示窗口
             window.setVisible(true);
         });
+    }
+    
+    /**
+     * 显示本地歌单内容
+     * @param playlist 要显示的歌单
+     */
+    private void displayPlaylist(Playlist playlist) {
+        // 更新歌单信息
+        playlistNameLabel.setText(playlist.getName());
+        playlistOwnerLabel.setText("创建者：" + playlist.getOwnerId());
+        
+        // 格式化创建时间
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+        playlistDateLabel.setText("创建时间：" + playlist.getCreateDate().format(formatter));
+        
+        // 更新封面图片
+        updateCoverImage(playlist.getCoverImagePath());
+        
+        // 清空表格
+        DefaultTableModel model = (DefaultTableModel) songTable.getModel();
+        model.setRowCount(0);
+        
+        // 保存当前播放列表供按钮使用
+        songTable.putClientProperty("currentPlaylist", playlist);
+        
+        // 加载歌曲数据
+        List<Song> songs = playlist.getSongs();
+        for (int i = 0; i < songs.size(); i++) {
+            Song song = songs.get(i);
+            model.addRow(new Object[]{
+                i + 1,                           // 序号
+                song.getTitle(),                 // 歌名
+                song.getArtist(),                // 歌手
+                formatDuration(song.getDuration()), // 时长
+                ""                               // 操作列（由渲染器处理）
+            });
+        }
+        
+        // 更新按钮显示
+        updateButtonVisibility(playlist);
+    }
+    
+    /**
+     * 过滤歌单列表
+     */
+    private void filterPlaylists() {
+        String searchText = searchField.getText().toLowerCase().trim();
+        
+        // 如果是占位符文本或为空，显示所有歌单
+        if (searchText.isEmpty() || searchText.equals("搜索歌单")) {
+            loadFriendsPlaylists();
+            return;
+        }
+        
+        // 清空当前列表
+        friendsListModel.clear();
+        
+        // 加载本地网友歌单
+        for (Playlist playlist : dataManager.getAllPlaylists()) {
+            if (!playlist.getOwnerId().equals("学号10001")) {
+                String name = playlist.getName().toLowerCase();
+                String ownerId = playlist.getOwnerId().toLowerCase();
+                // 匹配歌单名称或创建者ID
+                if (name.contains(searchText) || ownerId.contains(searchText)) {
+                    friendsListModel.addElement(playlist.getName());
+                }
+            }
+        }
+        
+        // 加载在线歌单
+        List<OnlineMusicSheet> onlineSheets = dataManager.getOnlineMusicSheets();
+        if (onlineSheets != null) {
+            for (OnlineMusicSheet sheet : onlineSheets) {
+                String name = sheet.getName().toLowerCase();
+                String creator = sheet.getCreator().toLowerCase();
+                String creatorId = sheet.getCreatorId().toLowerCase();
+                // 匹配歌单名、创建者名称或创建者ID
+                if (name.contains(searchText) || 
+                    creator.contains(searchText) || 
+                    creatorId.contains(searchText)) {
+                    String displayName = "[在线] " + sheet.getName();
+                    friendsListModel.addElement(displayName);
+                    onlineSheetMap.put(displayName, sheet);
+                }
+            }
+        }
+        
+        // 如果没有找到匹配项，显示提示
+        if (friendsListModel.isEmpty()) {
+            friendsListModel.addElement("未找到匹配的歌单");
+        }
     }
 } 

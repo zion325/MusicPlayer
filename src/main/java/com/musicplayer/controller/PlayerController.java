@@ -4,6 +4,8 @@ import com.musicplayer.model.Song;
 import com.musicplayer.model.Playlist;
 import com.musicplayer.audio.AudioPlayer;
 import com.musicplayer.util.MusicFileManager;
+import java.io.InputStream;
+import java.util.List;
 
 /**
  * 播放器控制器类，负责音乐播放的核心控制逻辑
@@ -26,6 +28,12 @@ public class PlayerController {
     
     /** 进度监听器 */
     private AudioPlayer.ProgressListener progressListener;
+    
+    /** 在线播放列表 */
+    private List<Song> onlinePlaylist;
+    
+    /** 流状态 */
+    private boolean streamClosed = false;
     
     /**
      * 构造函数，初始化音频播放器
@@ -67,8 +75,10 @@ public class PlayerController {
      */
     public void resume() {
         if (currentSong != null) {
-            audioPlayer.resume();
-            isPlaying = true;
+            if (!needNewStream()) {
+                audioPlayer.resume();
+                isPlaying = true;
+            }
         }
     }
     
@@ -78,6 +88,9 @@ public class PlayerController {
     public void pause() {
         audioPlayer.pause();
         isPlaying = false;
+        if (onlinePlaylist != null) {
+            streamClosed = true;  // 标记在线流已关闭
+        }
     }
     
     /**
@@ -90,70 +103,80 @@ public class PlayerController {
     
     /**
      * 播放下一首歌曲
-     * 根据当前播放模式决定下一首歌曲
      */
     public void next() {
-        if (currentPlaylist != null && currentPlaylist.getSongs().size() > 0) {
-            int currentIndex = currentPlaylist.getSongs().indexOf(currentSong);
+        List<Song> currentList = onlinePlaylist != null ? onlinePlaylist : 
+            (currentPlaylist != null ? currentPlaylist.getSongs() : null);
+            
+        if (currentList != null && !currentList.isEmpty()) {
+            int currentIndex = currentList.indexOf(currentSong);
             if (currentIndex >= 0) {
-                audioPlayer.stop();
+                stop();
                 
                 int nextIndex;
                 switch (playMode) {
                     case RANDOM:
-                        // 随机模式：随机选择一首（避免重复）
                         do {
-                            nextIndex = (int) (Math.random() * currentPlaylist.getSongs().size());
-                        } while (nextIndex == currentIndex && currentPlaylist.getSongs().size() > 1);
+                            nextIndex = (int) (Math.random() * currentList.size());
+                        } while (nextIndex == currentIndex && currentList.size() > 1);
                         break;
                     case SINGLE_LOOP:
-                        // 单曲循环：继续播放当前歌曲
                         nextIndex = currentIndex;
                         break;
                     case SEQUENCE:
                     default:
-                        // 顺序播放：播放下一首，到末尾时循环到开头
-                        nextIndex = (currentIndex + 1) % currentPlaylist.getSongs().size();
+                        nextIndex = (currentIndex + 1) % currentList.size();
                         break;
                 }
                 
-                setCurrentSong(currentPlaylist.getSongs().get(nextIndex));
-                play();
+                currentSong = currentList.get(nextIndex);
+                if (onlinePlaylist != null) {
+                    streamClosed = true;  // 标记需要新的流
+                } else {
+                    // 本地歌曲直接播放
+                    play();
+                }
+                isPlaying = true;     // 标记为播放状态
             }
         }
     }
     
     /**
      * 播放上一首歌曲
-     * 根据当前播放模式决定上一首歌曲
      */
     public void previous() {
-        if (currentPlaylist != null && currentPlaylist.getSongs().size() > 0) {
-            int currentIndex = currentPlaylist.getSongs().indexOf(currentSong);
+        List<Song> currentList = onlinePlaylist != null ? onlinePlaylist : 
+            (currentPlaylist != null ? currentPlaylist.getSongs() : null);
+            
+        if (currentList != null && !currentList.isEmpty()) {
+            int currentIndex = currentList.indexOf(currentSong);
             if (currentIndex >= 0) {
-                audioPlayer.stop();
+                stop();
                 
                 int prevIndex;
                 switch (playMode) {
                     case RANDOM:
-                        // 随机模式：随机选择一首（避免重复）
                         do {
-                            prevIndex = (int) (Math.random() * currentPlaylist.getSongs().size());
-                        } while (prevIndex == currentIndex && currentPlaylist.getSongs().size() > 1);
+                            prevIndex = (int) (Math.random() * currentList.size());
+                        } while (prevIndex == currentIndex && currentList.size() > 1);
                         break;
                     case SINGLE_LOOP:
-                        // 单曲循环：继续播放当前歌曲
                         prevIndex = currentIndex;
                         break;
                     case SEQUENCE:
                     default:
-                        // 顺序播放：播放上一首，到开头时循环到末尾
-                        prevIndex = (currentIndex - 1 + currentPlaylist.getSongs().size()) % currentPlaylist.getSongs().size();
+                        prevIndex = (currentIndex - 1 + currentList.size()) % currentList.size();
                         break;
                 }
                 
-                setCurrentSong(currentPlaylist.getSongs().get(prevIndex));
-                play();
+                currentSong = currentList.get(prevIndex);
+                if (onlinePlaylist != null) {
+                    streamClosed = true;  // 标记需要新的流
+                } else {
+                    // 本地歌曲直接播放
+                    play();
+                }
+                isPlaying = true;     // 标记为播放状态
             }
         }
     }
@@ -173,6 +196,47 @@ public class PlayerController {
     public void setProgressListener(AudioPlayer.ProgressListener listener) {
         this.progressListener = listener;
         audioPlayer.setProgressListener(listener);
+    }
+    
+    /**
+     * 设置在线播放列表
+     */
+    public void setOnlinePlaylist(List<Song> playlist) {
+        this.onlinePlaylist = playlist;
+    }
+    
+    /**
+     * 播放在线音乐流
+     */
+    public void playOnlineStream(InputStream musicStream) {
+        try {
+            audioPlayer.playStream(musicStream);
+            streamClosed = false;  // 重置流状态
+            isPlaying = true;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to play online music: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * 清除在线播放列表
+     */
+    public void clearOnlinePlaylist() {
+        this.onlinePlaylist = null;
+    }
+    
+    /**
+     * 检查是否是在线播放
+     */
+    public boolean isOnlinePlayback() {
+        return onlinePlaylist != null;
+    }
+    
+    /**
+     * 检查是否需要新的流
+     */
+    public boolean needNewStream() {
+        return onlinePlaylist != null && streamClosed;
     }
     
     // Getters and Setters

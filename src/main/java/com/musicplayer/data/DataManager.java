@@ -1,9 +1,11 @@
 package com.musicplayer.data;
 
+import com.musicplayer.model.OnlineMusicSheet;
 import com.musicplayer.model.Playlist;
 import com.musicplayer.model.Song;
 import com.musicplayer.util.MusicFileManager;
-import org.apache.commons.io.FileUtils;
+import com.musicplayer.network.MusicServerAPI;
+
 
 import java.io.*;
 import java.time.Duration;
@@ -33,13 +35,22 @@ public class DataManager {
     /** 收藏歌曲数据文件路径 */
     private final String FAVORITE_FILE = "favorites.dat";
     
+    /** 在线歌单API */
+    private final MusicServerAPI musicServerAPI;
+    
+    /** 在线歌单列表 */
+    private List<OnlineMusicSheet> onlineMusicSheets;
+    
     /**
      * 私有构造函数，初始化数据
      */
     private DataManager() {
         playlists = new HashMap<>();
+        musicServerAPI = new MusicServerAPI();  // 初始化 musicServerAPI
+        onlineMusicSheets = new ArrayList<>();  // 初始化 onlineMusicSheets
         loadData();
         loadFavorites(); // 加载收藏数据
+        loadOnlineMusicSheets(); // 加载在线歌单
     }
     
     /**
@@ -311,5 +322,45 @@ public class DataManager {
         } catch (IOException | ClassNotFoundException e) {
             e.printStackTrace();
         }
+    }
+    
+    /**
+     * 加载在线歌单
+     */
+    public void loadOnlineMusicSheets() {
+        try {
+            onlineMusicSheets = musicServerAPI.queryMusicSheets("top20");
+        } catch (IOException e) {
+            e.printStackTrace();
+            // 处理错误
+        }
+    }
+    
+    /**
+     * 获取在线歌单列表
+     */
+    public List<OnlineMusicSheet> getOnlineMusicSheets() {
+        return onlineMusicSheets;
+    }
+    
+    /**
+     * 下载在线音乐
+     */
+    public void downloadOnlineMusic(String md5, String filename) {
+        try (InputStream is = musicServerAPI.downloadMusic(md5)) {
+            // 使用新的方法保存文件
+            String targetPath = MusicFileManager.saveOnlineMusicFile(is, filename);
+            // 可以在这里触发下载完成的回调
+        } catch (IOException e) {
+            e.printStackTrace();
+            // 处理错误
+        }
+    }
+    
+    /**
+     * 获取音乐服务器API实例
+     */
+    public MusicServerAPI getMusicServerAPI() {
+        return musicServerAPI;
     }
 } 

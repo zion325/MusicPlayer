@@ -4,7 +4,6 @@ import javazoom.jl.player.advanced.AdvancedPlayer;
 import javazoom.jl.player.advanced.PlaybackEvent;
 import javazoom.jl.player.advanced.PlaybackListener;
 import javax.swing.Timer;
-import java.awt.event.ActionListener;
 import java.io.*;
 
 /**
@@ -44,6 +43,24 @@ public class AudioPlayer {
     /** 保存的播放位置 */
     private long savedPosition;
     
+    /** 播放开始时间 */
+    private long startTime;
+    
+    /** 播放暂停时的时间点 */
+    private long pausedTime;
+    
+    /** 缓存的音频数据 */
+    private byte[] audioData;
+    
+    /** 当前播放位置 */
+    private long currentPosition;
+    
+    /** 是否是在线播放 */
+    private boolean isOnlinePlayback;
+    
+    /** 播放进度（百分比）*/
+    private int currentProgress = 0;
+    
     /**
      * 进度监听器接口
      */
@@ -63,6 +80,8 @@ public class AudioPlayer {
      * 构造函数，初始化播放监听器
      */
     public AudioPlayer() {
+        this.startTime = 0;
+        this.pausedTime = 0;
         this.playbackListener = new PlaybackListener() {
             @Override
             public void playbackStarted(PlaybackEvent evt) {
@@ -97,14 +116,38 @@ public class AudioPlayer {
         }
         
         progressTimer = new Timer(100, e -> {
-            if (isPlaying && progressListener != null && totalBytes > 0) {
+            if (isPlaying && progressListener != null) {
                 try {
-                    bytesRead = totalBytes - fileInputStream.available();
-                    int progress = (int) ((bytesRead * 100.0) / totalBytes);
-                    progress = Math.min(progress, 100);
-                    progressListener.onProgress(progress, 100);
+                    if (fileInputStream != null && totalBytes > 0) {
+                        // 本地文件播放进度
+                        bytesRead = totalBytes - fileInputStream.available();
+                        currentProgress = (int) ((bytesRead * 100.0) / totalBytes);
+                        currentProgress = Math.min(currentProgress, 100);
+                        progressListener.onProgress(currentProgress, 100);
+                    } else if (isOnlinePlayback && audioData != null) {
+                        // 在线播放进度 - 使用实际数据大小计算
+                        long currentTime = System.currentTimeMillis();
+                        long elapsedTime = currentTime - startTime;
+                        
+                        // 使用音频数据大小和播放时间计算进度
+                        long totalDuration = 180000; // 3分钟 = 180000毫秒
+                        currentProgress = (int) ((elapsedTime * 100.0) / totalDuration);
+                        currentProgress = Math.min(currentProgress, 100);
+                        
+                        // 如果播放完成，重置进度
+                        if (currentProgress >= 100) {
+                            isPlaying = false;
+                            stopProgressTimer();
+                        }
+                        
+                        progressListener.onProgress(currentProgress, 100);
+                    }
                 } catch (IOException ex) {
-                    ex.printStackTrace();
+                    // 忽略Stream Closed异常
+                    if (!(ex.getMessage() != null && ex.getMessage().contains("Stream Closed"))) {
+                        ex.printStackTrace();
+                        stopProgressTimer();
+                    }
                 }
             }
         });
@@ -122,18 +165,116 @@ public class AudioPlayer {
     }
     
     /**
-     * 播放指定的音频文件
-     * @param filePath 音频文件路径
+     * 播放音乐流（在线音乐）
+     */
+    public void playStream(InputStream inputStream) throws Exception {
+        stop();
+        isOnlinePlayback = true;
+        
+        // 重置所有计数器
+        totalBytes = 0;
+        bytesRead = 0;
+        currentPosition = 0;
+        startTime = System.currentTimeMillis();
+        pausedTime = 0;
+        currentProgress = 0;
+        
+        // 读取整个流到内存
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int read;
+        while ((read = inputStream.read(buffer)) != -1) {
+            baos.write(buffer, 0, read);
+        }
+        
+        // 保存音频数据
+        audioData = baos.toByteArray();
+        totalBytes = audioData.length;
+        
+        // 创建新的播放流
+        ByteArrayInputStream bais = new ByteArrayInputStream(audioData);
+        bufferedInputStream = new BufferedInputStream(bais);
+        player = new AdvancedPlayer(bufferedInputStream);
+        
+        if (playbackListener != null) {
+            player.setPlayBackListener(playbackListener);
+        }
+        
+        isPlaying = true;
+        startProgressTimer();
+        
+        playerThread = new Thread(() -> {
+            try {
+                player.play();
+            } catch (Exception e) {
+                e.printStackTrace();
+            } finally {
+                isPlaying = false;
+                stopProgressTimer();
+            }
+        });
+        playerThread.start();
+    }
+    
+    /**
+     * 播放本地音乐文件
      */
     public void play(String filePath) {
         if (!filePath.equals(currentFilePath)) {
             stop();
             currentFilePath = filePath;
-            savedPosition = 0;
+            isOnlinePlayback = false;
             startPlayback(0);
         } else {
-            savedPosition = 0;
             startPlayback(0);
+        }
+    }
+    
+    /**
+     * 开始播放
+     */
+    private void startPlayback(long startPosition) {
+        try {
+            if (isOnlinePlayback) {
+                // 在线音乐播放
+                if (audioData != null) {
+                    ByteArrayInputStream bais = new ByteArrayInputStream(audioData);
+                    if (startPosition > 0) {
+                        bais.skip(startPosition);
+                    }
+                    bufferedInputStream = new BufferedInputStream(bais);
+                }
+            } else {
+                // 本地音乐播放
+                File file = new File(currentFilePath);
+                totalBytes = file.length();
+                fileInputStream = new FileInputStream(currentFilePath);
+                if (startPosition > 0) {
+                    fileInputStream.skip(startPosition);
+                }
+                bufferedInputStream = new BufferedInputStream(fileInputStream);
+            }
+            
+            if (bufferedInputStream != null) {
+                player = new AdvancedPlayer(bufferedInputStream);
+                player.setPlayBackListener(playbackListener);
+                isPlaying = true;
+                startProgressTimer();
+                
+                playerThread = new Thread(() -> {
+                    try {
+                        player.play();
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    } finally {
+                        isPlaying = false;
+                        stopProgressTimer();
+                    }
+                });
+                playerThread.start();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
     
@@ -143,16 +284,18 @@ public class AudioPlayer {
     public void pause() {
         if (player != null && isPlaying) {
             try {
-                savedPosition = bytesRead;
-                stopProgressTimer();
+                // 保存当前位置和进度
+                if (isOnlinePlayback) {
+                    pausedTime = System.currentTimeMillis() - startTime;
+                    currentProgress = Math.min((int)((pausedTime * 100.0) / (3 * 60 * 1000)), 100);
+                } else if (fileInputStream != null) {
+                    currentPosition = totalBytes - fileInputStream.available();
+                }
+                
+                // 停止播放
                 player.close();
-                if (fileInputStream != null) {
-                    fileInputStream.close();
-                }
-                if (bufferedInputStream != null) {
-                    bufferedInputStream.close();
-                }
                 isPlaying = false;
+                stopProgressTimer();
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -160,51 +303,47 @@ public class AudioPlayer {
     }
     
     /**
-     * 从暂停处继续播放
+     * 继续播放
      */
     public void resume() {
-        if (currentFilePath != null && !isPlaying) {
-            startPlayback(savedPosition);
-        }
-    }
-    
-    /**
-     * 开始播放
-     * @param startPosition 开始位置（字节数）
-     */
-    private void startPlayback(long startPosition) {
-        try {
-            File file = new File(currentFilePath);
-            totalBytes = file.length();
-            
-            playerThread = new Thread(() -> {
+        if (!isPlaying) {
+            if (isOnlinePlayback && audioData != null) {
+                // 从暂停位置继续播放
+                ByteArrayInputStream bais = new ByteArrayInputStream(audioData);
                 try {
-                    fileInputStream = new FileInputStream(currentFilePath);
-                    if (startPosition > 0) {
-                        fileInputStream.skip(startPosition);
-                        bytesRead = startPosition;
-                    } else {
-                        bytesRead = 0;
+                    // 跳过已播放的部分
+                    long skipBytes = (pausedTime * totalBytes) / (3 * 60 * 1000);
+                    bais.skip(skipBytes);
+                    
+                    bufferedInputStream = new BufferedInputStream(bais);
+                    player = new AdvancedPlayer(bufferedInputStream);
+                    
+                    if (playbackListener != null) {
+                        player.setPlayBackListener(playbackListener);
                     }
                     
-                    bufferedInputStream = new BufferedInputStream(fileInputStream);
-                    player = new AdvancedPlayer(bufferedInputStream);
-                    player.setPlayBackListener(playbackListener);
-                    
+                    startTime = System.currentTimeMillis() - pausedTime;
                     isPlaying = true;
                     startProgressTimer();
-                    player.play();
+                    
+                    playerThread = new Thread(() -> {
+                        try {
+                            player.play();
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        } finally {
+                            isPlaying = false;
+                            stopProgressTimer();
+                        }
+                    });
+                    playerThread.start();
                 } catch (Exception e) {
                     e.printStackTrace();
-                } finally {
-                    isPlaying = false;
-                    stopProgressTimer();
                 }
-            });
-            
-            playerThread.start();
-        } catch (Exception e) {
-            e.printStackTrace();
+            } else {
+                // 本地文件播放
+                startPlayback(currentPosition);
+            }
         }
     }
     
@@ -212,20 +351,38 @@ public class AudioPlayer {
      * 停止播放
      */
     public void stop() {
+        stopProgressTimer();
+        
         if (player != null) {
             try {
                 player.close();
-                if (fileInputStream != null) fileInputStream.close();
-                if (bufferedInputStream != null) bufferedInputStream.close();
-                isPlaying = false;
-                savedPosition = 0;
+                player = null;
             } catch (Exception e) {
                 e.printStackTrace();
             }
         }
-        if (playerThread != null && playerThread.isAlive()) {
-            playerThread.interrupt();
+        
+        // 清理资源
+        try {
+            if (bufferedInputStream != null) {
+                bufferedInputStream.close();
+                bufferedInputStream = null;
+            }
+            if (fileInputStream != null) {
+                fileInputStream.close();
+                fileInputStream = null;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
+        
+        isPlaying = false;
+        currentPosition = 0;
+        totalBytes = 0;
+        bytesRead = 0;
+        audioData = null;
+        currentFilePath = null;
+        currentProgress = 0;  // 重置进度
     }
     
     /**

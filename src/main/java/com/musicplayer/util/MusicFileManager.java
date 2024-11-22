@@ -2,10 +2,9 @@ package com.musicplayer.util;
 
 import com.musicplayer.model.Song;
 import org.apache.commons.io.FileUtils;
-import javazoom.jl.player.advanced.AdvancedPlayer;
 import java.io.*;
 import java.nio.file.Files;
-import java.nio.file.Path;
+
 import java.nio.file.Paths;
 import java.time.Duration;
 import org.jaudiotagger.audio.AudioFile;
@@ -168,5 +167,82 @@ public class MusicFileManager {
             e.printStackTrace();
         }
         return false;
+    }
+    
+    /**
+     * 从输入流保存在线音乐文件
+     * @param inputStream 音乐文件输入流
+     * @param filename 文件名
+     * @return 保存后的文件路径
+     * @throws IOException 如果保存失败
+     */
+    public static String saveOnlineMusicFile(InputStream inputStream, String filename) throws IOException {
+        // 确保目录存在
+        File musicDir = new File(MUSIC_DIR);
+        if (!musicDir.exists()) {
+            musicDir.mkdirs();
+        }
+        
+        // 生成唯一文件名
+        String uniqueFilename = System.currentTimeMillis() + "_" + filename;
+        File targetFile = new File(musicDir, uniqueFilename);
+        
+        // 复制文件内容
+        try (FileOutputStream fos = new FileOutputStream(targetFile)) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                fos.write(buffer, 0, bytesRead);
+            }
+        }
+        
+        return targetFile.getPath();
+    }
+    
+    /**
+     * 从输入流获取MP3时长
+     */
+    public static Duration getMp3DurationFromStream(BufferedInputStream bis) {
+        File tempFile = null;
+        FileOutputStream fos = null;
+        try {
+            // 创建临时文件
+            tempFile = File.createTempFile("temp_music_", ".mp3");
+            tempFile.deleteOnExit(); // 确保程序退出时删除临时文件
+            
+            // 将输入流内容写入临时文件
+            fos = new FileOutputStream(tempFile);
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            
+            // 不使用mark/reset，直接读取整个流
+            while ((bytesRead = bis.read(buffer)) != -1) {
+                fos.write(buffer, 0, bytesRead);
+            }
+            fos.close();
+            
+            // 使用临时文件获取时长
+            AudioFile audioFile = AudioFileIO.read(tempFile);
+            int durationInSeconds = audioFile.getAudioHeader().getTrackLength();
+            
+            return Duration.ofSeconds(durationInSeconds);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Duration.ZERO;
+        } finally {
+            // 清理资源
+            try {
+                if (fos != null) {
+                    fos.close();
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            
+            // 删除临时文件
+            if (tempFile != null && tempFile.exists()) {
+                tempFile.delete();
+            }
+        }
     }
 } 
